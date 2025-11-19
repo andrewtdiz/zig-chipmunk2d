@@ -1,6 +1,11 @@
 const std = @import("std");
 
 pub const core = @import("./zig_chipmunk2d/core.zig");
+pub const space = @import("./zig_chipmunk2d/space.zig");
+pub const shape = @import("./zig_chipmunk2d/shape.zig");
+pub const constraint = @import("./zig_chipmunk2d/constraint.zig");
+pub const spatial_index = @import("./zig_chipmunk2d/spatial_index.zig");
+pub const collision = @import("./zig_chipmunk2d/collision.zig");
 const types = core.types;
 const vect = core.vect;
 const bb = core.bb;
