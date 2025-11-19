@@ -44,41 +44,40 @@ Non-goals:
 
 Proposed structure under `src/`:
 
-- `zig_chipmunk2d/`
-  - `core/`
-    - `types.zig` (cpFloat, cpBool, cpTimestamp, configuration, etc.)
-    - `vect.zig` (cpVect and 2D math)
-    - `bb.zig` (cpBB)
-    - `transform.zig` (cpTransform)
-  - `util/`
-    - `pool.zig` (contact buffers, arbiter pools and other helpers that are not covered by Zig stdlib containers)
-  - `shape/`
-    - `shape_base.zig` (cpShape + vtable)
-    - `circle.zig` (cpCircleShape)
-    - `segment.zig` (cpSegmentShape)
-    - `poly.zig` (cpPolyShape)
-  - `collision/`
-    - `collision.zig` (cpCollisionInfo, GJK/EPA)
-    - `arbiter.zig` (cpArbiter)
-  - `space/`
-    - `space.zig` (cpSpace core, properties)
-    - `space_step.zig` (cpSpaceStep pipeline)
-    - `space_query.zig` (queries)
-    - `sleeping.zig` (components, sleeping logic)
-  - `spatial_index/`
-    - `interface.zig` (cpSpatialIndex abstraction)
-    - `bbtree.zig` (cpBBTree)
-    - `space_hash.zig` (cpSpaceHash)
-    - `sweep1d.zig` (cpSweep1D)
-  - `constraint/`
-    - `constraint_base.zig` (cpConstraint)
-    - one module per constraint: pin, pivot, slide, gear, ratchet, rotary_limit, damped_spring, damped_rotary_spring, simple_motor, groove, etc.
-  - `extras/`
-    - `hasty_space.zig` (cpHastySpace / multithreaded stepping)
-    - `march.zig` (cpMarch)
-    - `polyline.zig` (cpPolyline)
-    - `robust.zig` (cpRobust)
-    - `space_debug.zig` (cpSpaceDebug)
+- `core/`
+  - `types.zig` (cpFloat, cpBool, cpTimestamp, configuration, etc.)
+  - `vect.zig` (cpVect and 2D math)
+  - `bb.zig` (cpBB)
+  - `transform.zig` (cpTransform)
+- `util/`
+  - `pool.zig` (contact buffers, arbiter pools and other helpers that are not covered by Zig stdlib containers)
+- `shape/`
+  - `shape_base.zig` (cpShape + vtable)
+  - `circle.zig` (cpCircleShape)
+  - `segment.zig` (cpSegmentShape)
+  - `poly.zig` (cpPolyShape)
+- `collision/`
+  - `collision.zig` (cpCollisionInfo, GJK/EPA)
+  - `arbiter.zig` (cpArbiter)
+- `space/`
+  - `space.zig` (cpSpace core, properties)
+  - `space_step.zig` (cpSpaceStep pipeline)
+  - `space_query.zig` (queries)
+  - `sleeping.zig` (components, sleeping logic)
+- `spatial_index/`
+  - `interface.zig` (cpSpatialIndex abstraction)
+  - `bbtree.zig` (cpBBTree)
+  - `space_hash.zig` (cpSpaceHash)
+  - `sweep1d.zig` (cpSweep1D)
+- `constraint/`
+  - `constraint_base.zig` (cpConstraint)
+  - one module per constraint: pin, pivot, slide, gear, ratchet, rotary_limit, damped_spring, damped_rotary_spring, simple_motor, groove, etc.
+- `extras/`
+  - `hasty_space.zig` (cpHastySpace / multithreaded stepping)
+  - `march.zig` (cpMarch)
+  - `polyline.zig` (cpPolyline)
+  - `robust.zig` (cpRobust)
+  - `space_debug.zig` (cpSpaceDebug)
 
 `src/root.zig` exposes the public Zig API for the physics engine (no separate C-ABI layer).
 
