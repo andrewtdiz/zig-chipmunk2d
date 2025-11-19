@@ -7,6 +7,7 @@ const collision = @import("collision.zig");
 pub const cpArbiter = struct {
     shape_a: *shape_base.cpShape,
     shape_b: *shape_base.cpShape,
+    collision_id: types.cpCollisionID = 0,
     contacts: std.BoundedArray(collision.Contact, 4),
 
     pub fn init(shape_a: *shape_base.cpShape, shape_b: *shape_base.cpShape) cpArbiter {

@@ -162,6 +162,7 @@ pub const cpSpace = struct {
     arbiters: std.ArrayList(arbiter.cpArbiter),
     post_steps: std.ArrayList(PostStepCallback),
     handler: CollisionHandler = .{},
+    collision_cache: collision.CollisionCache,
     dynamic_index: ManagedIndex,
     static_index: ManagedIndex,
 
@@ -175,6 +176,7 @@ pub const cpSpace = struct {
             .constraints = std.ArrayList(ConstraintEntry).init(allocator),
             .arbiters = std.ArrayList(arbiter.cpArbiter).init(allocator),
             .post_steps = std.ArrayList(PostStepCallback).init(allocator),
+            .collision_cache = collision.CollisionCache.init(allocator),
             .dynamic_index = ManagedIndex.init(allocator, .bb_tree, shapeBounds, null, null),
             .static_index = ManagedIndex.init(allocator, .bb_tree, shapeBounds, null, null),
         };
@@ -188,6 +190,7 @@ pub const cpSpace = struct {
         self.constraints.deinit();
         self.arbiters.deinit();
         self.post_steps.deinit();
+        self.collision_cache.deinit();
         self.dynamic_index.deinit();
         self.static_index.deinit();
     }
@@ -219,6 +222,7 @@ pub const cpSpace = struct {
     pub fn removeShape(self: *cpSpace, shape: *shape_base.cpShape) void {
         removePtr(*shape_base.cpShape, &self.shapes, shape);
         const ptr = @as(*const anyopaque, @ptrCast(shape));
+        self.collision_cache.removeShape(shape);
         switch (shape.body.body_type) {
             .static => {
                 removePtr(*shape_base.cpShape, &self.static_shapes, shape);
@@ -400,10 +404,11 @@ pub fn resolveCollisions(space: *cpSpace) void {
         while (j < space.shapes.items.len) : (j += 1) {
             const shape_b = space.shapes.items[j];
             if (shape_base.cpShapeFilter.reject(shape_a.filter, shape_b.filter)) continue;
-            const result = collision.collide(shape_a, shape_b);
+            const result = collision.collide(&space.collision_cache, shape_a, shape_b);
             if (result.contactCount() == 0) continue;
 
             var new_arb = arbiter.cpArbiter.init(shape_a, shape_b);
+            new_arb.collision_id = result.id;
             for (result.contacts.constSlice()) |contact| {
                 new_arb.addContact(contact);
             }
@@ -416,9 +421,6 @@ pub fn resolveCollisions(space: *cpSpace) void {
             }
 
             space.arbiters.append(new_arb) catch {};
-            if (space.handler.postSolve) |post_func| {
-                post_func(&new_arb, space);
-            }
         }
     }
 }
@@ -458,6 +460,14 @@ pub fn resolveArbitersRange(space: *cpSpace, start: usize, end: usize) void {
 
         if (space.handler.separate) |sep_func| {
             sep_func(arb_ptr, space);
+        }
+    }
+}
+
+pub fn postSolveArbiters(space: *cpSpace) void {
+    if (space.handler.postSolve) |post_func| {
+        for (space.arbiters.items) |*arb_ref| {
+            post_func(arb_ref, space);
         }
     }
 }

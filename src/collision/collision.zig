@@ -14,7 +14,6 @@ const WARN_EPA_ITERATIONS = 20;
 const MAX_EPA_HULL = 64;
 
 const PairKey = u128;
-var collision_id_cache = std.AutoHashMapUnmanaged(PairKey, types.cpCollisionID){};
 
 fn pairKey(a: *const shape_base.cpShape, b: *const shape_base.cpShape) PairKey {
     const addr_a: u64 = @intFromPtr(a);
@@ -24,17 +23,40 @@ fn pairKey(a: *const shape_base.cpShape, b: *const shape_base.cpShape) PairKey {
     return (@as(PairKey, hi) << 64) | lo;
 }
 
-fn cachedCollisionId(key: PairKey) types.cpCollisionID {
-    return collision_id_cache.get(key) orelse 0;
-}
+pub const CollisionCache = struct {
+    allocator: std.mem.Allocator,
+    map: std.AutoHashMap(PairKey, types.cpCollisionID),
 
-fn storeCollisionId(key: PairKey, id: types.cpCollisionID) void {
-    if (collision_id_cache.getPtr(key)) |existing| {
-        existing.* = id;
-        return;
+    pub fn init(allocator: std.mem.Allocator) CollisionCache {
+        return .{ .allocator = allocator, .map = std.AutoHashMap(PairKey, types.cpCollisionID).init(allocator) };
     }
-    collision_id_cache.put(std.heap.page_allocator, key, id) catch {};
-}
+
+    pub fn deinit(self: *CollisionCache) void {
+        self.map.deinit();
+    }
+
+    fn cachedCollisionId(self: *CollisionCache, key: PairKey) types.cpCollisionID {
+        return self.map.get(key) orelse 0;
+    }
+
+    fn storeCollisionId(self: *CollisionCache, key: PairKey, id: types.cpCollisionID) void {
+        self.map.put(key, id) catch {};
+    }
+
+    pub fn removeShape(self: *CollisionCache, shape: *const shape_base.cpShape) void {
+        const target: u64 = @intFromPtr(shape);
+        const mask: PairKey = (@as(PairKey, 1) << 64) - 1;
+        var it = self.map.iterator();
+        while (it.next()) |entry| {
+            const key = entry.key_ptr.*;
+            const lo: u64 = @intCast(key & mask);
+            const hi: u64 = @intCast(key >> 64);
+            if (lo == target or hi == target) {
+                it.remove();
+            }
+        }
+    }
+};
 
 pub const Contact = struct {
     point: vect.cpVect,
@@ -630,11 +652,11 @@ fn collideWithId(a: *const shape_base.cpShape, b: *const shape_base.cpShape, id:
     };
 }
 
-pub fn collide(a: *const shape_base.cpShape, b: *const shape_base.cpShape) CollisionResult {
+pub fn collide(cache: *CollisionCache, a: *const shape_base.cpShape, b: *const shape_base.cpShape) CollisionResult {
     const key = pairKey(a, b);
-    var id = cachedCollisionId(key);
+    var id = cache.cachedCollisionId(key);
     const result = collideWithId(a, b, &id);
-    storeCollisionId(key, id);
+    cache.storeCollisionId(key, id);
     return result;
 }
 
@@ -664,7 +686,10 @@ pub fn testCircleSegmentCollision() !void {
     var circle_a = circle.cpCircleShape.init(&body_a, 0.5, vect.cpvzero);
     var segment_b = segment.cpSegmentShape.init(&body_b, vect.cpv(-1.0, 0.0), vect.cpv(1.0, 0.0), 0.1);
 
-    const contact = collide(&circle_a.base, &segment_b.base);
+    var cache = CollisionCache.init(std.testing.allocator);
+    defer cache.deinit();
+
+    const contact = collide(&cache, &circle_a.base, &segment_b.base);
     try std.testing.expect(contact.contactCount() == 1);
     try std.testing.expect(contact.contacts.constSlice()[0].distance < 0.0);
 }
@@ -680,8 +705,29 @@ pub fn testSegmentPolyCollision() !void {
     const verts = [_]vect.cpVect{ vect.cpv(-0.5, -0.5), vect.cpv(0.5, -0.5), vect.cpv(0.5, 0.5), vect.cpv(-0.5, 0.5) };
     var poly_b = poly.cpPolyShape.init(&body_b, &verts, 0.0);
 
-    const result = collide(&segment_a.base, &poly_b.base);
+    var cache = CollisionCache.init(std.testing.allocator);
+    defer cache.deinit();
+
+    const result = collide(&cache, &segment_a.base, &poly_b.base);
     try std.testing.expect(result.contactCount() >= 1);
+}
+
+pub fn testCollisionCacheRemoval() !void {
+    var body_a = shape_base.body_mod.cpBody.init(1.0, 1.0);
+    var body_b = shape_base.body_mod.cpBody.init(1.0, 1.0);
+
+    var circle_a = circle.cpCircleShape.init(&body_a, 0.5, vect.cpvzero);
+    var circle_b = circle.cpCircleShape.init(&body_b, 0.5, vect.cpvzero);
+
+    var cache = CollisionCache.init(std.testing.allocator);
+    defer cache.deinit();
+
+    const contact = collide(&cache, &circle_a.base, &circle_b.base);
+    try std.testing.expect(contact.contactCount() > 0);
+    try std.testing.expectEqual(@as(usize, 1), cache.map.count());
+
+    cache.removeShape(&circle_a.base);
+    try std.testing.expectEqual(@as(usize, 0), cache.map.count());
 }
 
 pub fn testPolyPolyCollision() !void {
@@ -695,7 +741,10 @@ pub fn testPolyPolyCollision() !void {
     var poly_a = poly.cpPolyShape.init(&body_a, &verts, 0.0);
     var poly_b = poly.cpPolyShape.init(&body_b, &verts, 0.0);
 
-    const result = collide(&poly_a.base, &poly_b.base);
+    var cache = CollisionCache.init(std.testing.allocator);
+    defer cache.deinit();
+
+    const result = collide(&cache, &poly_a.base, &poly_b.base);
     try std.testing.expect(result.contactCount() >= 1);
     try std.testing.expect(result.contacts.constSlice()[0].distance <= 0.0);
 }

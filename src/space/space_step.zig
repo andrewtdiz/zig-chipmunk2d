@@ -22,6 +22,7 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
                 resolveArbiters(space);
             }
 
+            runPostSolve(space);
             integratePositions(space, dt);
             runConstraintCallback(space, dt, dt_coef, .postStep);
             runPostSteps(space);
@@ -76,10 +77,11 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
                 if (@intFromPtr(other) <= @intFromPtr(ctx.primary)) return;
             }
             if (shape_base.cpShapeFilter.reject(ctx.primary.filter, other.filter)) return;
-            const result = collision.collide(ctx.primary, other);
+            const result = collision.collide(&ctx.space.collision_cache, ctx.primary, other);
             if (result.contactCount() == 0) return;
 
             var new_arb = arbiter.cpArbiter.init(ctx.primary, other);
+            new_arb.collision_id = result.id;
             for (result.contacts.constSlice()) |contact| {
                 new_arb.addContact(contact);
             }
@@ -92,9 +94,6 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
             }
 
             ctx.space.arbiters.append(new_arb) catch return;
-            if (ctx.space.handler.postSolve) |post_func| {
-                post_func(&new_arb, ctx.space);
-            }
         }
 
         fn resolveArbiters(space: *Space) void {
@@ -126,6 +125,14 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
 
                 if (space.handler.separate) |sep_func| {
                     sep_func(arb_ref, space);
+                }
+            }
+        }
+
+        fn runPostSolve(space: *Space) void {
+            if (space.handler.postSolve) |post_func| {
+                for (space.arbiters.items) |*arb_ref| {
+                    post_func(arb_ref, space);
                 }
             }
         }
