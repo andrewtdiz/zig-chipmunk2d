@@ -16,6 +16,7 @@ const CellBucket = struct {
 
     fn deinit(self: *CellBucket, allocator: std.mem.Allocator) void {
         self.items.deinit(allocator);
+        self.items = .{};
     }
 
     fn add(self: *CellBucket, allocator: std.mem.Allocator, object: *const anyopaque) !void {
@@ -30,8 +31,9 @@ const CellBucket = struct {
                 break;
             }
         }
-        if (self.items.items.len == 0) {
-            self.items.deinit(allocator);
+
+        if (self.items.items.len == 0 and self.items.capacity != 0) {
+            self.deinit(allocator);
         }
     }
 };
@@ -50,7 +52,12 @@ pub const cpSpaceHash = struct {
     config: Config,
     query_stamp: u64 = 1,
 
-    pub fn init(allocator: std.mem.Allocator, bounds_func: *const spatial_interface.BoundsFunc, context: ?*const anyopaque, config: Config) cpSpaceHash {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        bounds_func: *const spatial_interface.BoundsFunc,
+        context: ?*const anyopaque,
+        config: Config,
+    ) cpSpaceHash {
         var cells = std.AutoArrayHashMap(CellKey, CellBucket).init(allocator);
         cells.ensureTotalCapacity(config.max_cells) catch {};
         return .{
@@ -64,8 +71,8 @@ pub const cpSpaceHash = struct {
     }
 
     pub fn deinit(self: *cpSpaceHash) void {
-        var it = self.cells.iterator();
-        while (it.next()) |cell| {
+        var cell_it = self.cells.iterator();
+        while (cell_it.next()) |cell| {
             cell.value_ptr.deinit(self.allocator);
         }
         self.cells.deinit();
@@ -98,10 +105,11 @@ pub const cpSpaceHash = struct {
     pub fn reindex(self: *cpSpaceHash) !void {
         var it = self.entries.iterator();
         while (it.next()) |entry| {
-            self.removeFromCells(entry.value_ptr.*, entry.key_ptr.*);
-            entry.value_ptr.bounds = self.bounds_func(entry.key_ptr.*, self.context);
+            const object = entry.key_ptr.*;
+            self.removeFromCells(entry.value_ptr.*, object);
+            entry.value_ptr.bounds = self.bounds_func(object, self.context);
             entry.value_ptr.cells.clearRetainingCapacity();
-            try self.populateEntry(entry.value_ptr, entry.key_ptr.*);
+            try self.populateEntry(entry.value_ptr, object);
         }
     }
 
@@ -112,7 +120,8 @@ pub const cpSpaceHash = struct {
         while (y <= range.max_y) : (y += 1) {
             var x = range.min_x;
             while (x <= range.max_x) : (x += 1) {
-                if (self.cells.getPtr(encodeCell(x, y))) |bucket| {
+                const key = encodeCell(x, y);
+                if (self.cells.getPtr(key)) |bucket| {
                     for (bucket.items.items) |object| {
                         if (self.entries.getPtr(object)) |entry| {
                             if (entry.last_query == self.query_stamp) continue;
@@ -146,9 +155,11 @@ pub const cpSpaceHash = struct {
             while (x <= range.max_x) : (x += 1) {
                 const key = encodeCell(x, y);
                 try entry.cells.append(key);
-                const slot = try self.cells.getOrPut(key);
-                if (!slot.found_existing) slot.value_ptr.* = .{};
-                try slot.value_ptr.add(self.allocator, object);
+                var gop = try self.cells.getOrPut(key);
+                if (!gop.found_existing) {
+                    gop.value_ptr.* = .{};
+                }
+                try gop.value_ptr.add(self.allocator, object);
             }
         }
     }
@@ -161,7 +172,12 @@ pub const cpSpaceHash = struct {
         }
     }
 
-    fn cellRange(self: *const cpSpaceHash, bounds: bb.cpBB) struct { min_x: i64, max_x: i64, min_y: i64, max_y: i64 } {
+    fn cellRange(self: *const cpSpaceHash, bounds: bb.cpBB) struct {
+        min_x: i64,
+        max_x: i64,
+        min_y: i64,
+        max_y: i64,
+    } {
         const dim = if (self.config.cell_dim == 0.0) 1.0 else self.config.cell_dim;
         const min_x = @as(i64, @intFromFloat(@floor(bounds.l / dim)));
         const max_x = @as(i64, @intFromFloat(@floor(bounds.r / dim)));
@@ -174,23 +190,55 @@ pub const cpSpaceHash = struct {
 fn encodeCell(x: i64, y: i64) CellKey {
     const ux = @as(u64, @bitCast(x));
     const uy = @as(u64, @bitCast(y));
-    return (@as(u128, ux) << 64) | @as(u128, uy);
+    return (@as(CellKey, ux) << 64) | @as(CellKey, uy);
 }
 
-test "space hash basic query" {
+fn makeBox(x0: f64, y0: f64, x1: f64, y1: f64) bb.cpBB {
+    return bb.cpBBNew(x0, y0, x1, y1);
+}
+
+fn accumulateCount(_: *const anyopaque, _: bb.cpBB, ctx: ?*anyopaque) void {
+    const counter = @as(*usize, @ptrCast(ctx.?));
+    counter.* += 1;
+}
+
+test "cpSpaceHash basic query" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var bounds = [2]bb.cpBB{ bb.cpBBNew(0, 0, 1, 1), bb.cpBBNew(5, 5, 6, 6) };
+    var bounds = [2]bb.cpBB{
+        bb.cpBBNew(0.0, 0.0, 1.0, 1.0),
+        bb.cpBBNew(5.0, 5.0, 6.0, 6.0),
+    };
     var hash = cpSpaceHash.init(allocator, spatial_interface.bbForPointer, null, .{ .cell_dim = 2.0, .max_cells = 8 });
     defer hash.deinit();
 
     try hash.insert(&bounds[0]);
     try hash.insert(&bounds[1]);
+    try std.testing.expectEqual(@as(usize, 2), hash.count());
 
     var matches = std.ArrayList(bb.cpBB).init(allocator);
     defer matches.deinit();
-    hash.query(bb.cpBBNew(-1, -1, 2, 2), spatial_interface.accumulateQuery, &matches);
+    hash.query(bb.cpBBNew(-1.0, -1.0, 2.0, 2.0), spatial_interface.accumulateQuery, &matches);
     try std.testing.expectEqual(@as(usize, 1), matches.items.len);
+}
+
+test "cpSpaceHash reindex refreshes buckets" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var hash = cpSpaceHash.init(allocator, spatial_interface.bbForPointer, null, .{ .cell_dim = 1.0, .max_cells = 32 });
+    defer hash.deinit();
+
+    var box = makeBox(0.0, 0.0, 1.0, 1.0);
+    try hash.insert(&box);
+
+    box = makeBox(5.0, 5.0, 6.0, 6.0);
+    try hash.reindex();
+
+    var hits: usize = 0;
+    hash.query(makeBox(4.5, 4.5, 6.5, 6.5), accumulateCount, &hits);
+    try std.testing.expectEqual(@as(usize, 1), hits);
 }

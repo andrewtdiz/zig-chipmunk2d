@@ -25,6 +25,13 @@ pub const ConstraintOps = struct {
     postStep: ?fn (*anyopaque) void = null,
 };
 
+pub const ConstraintCallbackPhase = enum {
+    preStep,
+    applyCachedImpulse,
+    applyImpulse,
+    postStep,
+};
+
 pub const ConstraintEntry = struct {
     constraint: *constraint_base.cpConstraint,
     payload: *anyopaque,
@@ -59,7 +66,13 @@ pub const ManagedIndex = struct {
     kind: IndexKind,
     storage: IndexUnion,
 
-    pub fn init(allocator: std.mem.Allocator, kind: IndexKind, bounds_func: *const spatial_interface.BoundsFunc, context: ?*const anyopaque) ManagedIndex {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        kind: IndexKind,
+        bounds_func: *const spatial_interface.BoundsFunc,
+        context: ?*const anyopaque,
+        config: ?space_hash_mod.Config,
+    ) ManagedIndex {
         return .{
             .allocator = allocator,
             .bounds_func = bounds_func,
@@ -67,7 +80,7 @@ pub const ManagedIndex = struct {
             .kind = kind,
             .storage = switch (kind) {
                 .bb_tree => IndexUnion{ .bb_tree = bbtree.cpBBTree.init(allocator, bounds_func, context) },
-                .space_hash => IndexUnion{ .space_hash = space_hash_mod.cpSpaceHash.init(allocator, bounds_func, context, .{}) },
+                .space_hash => IndexUnion{ .space_hash = space_hash_mod.cpSpaceHash.init(allocator, bounds_func, context, config orelse .{}) },
                 .sweep1d => IndexUnion{ .sweep1d = sweep_mod.cpSweep1D.init(allocator, bounds_func, context) },
             },
         };
@@ -162,8 +175,8 @@ pub const cpSpace = struct {
             .constraints = std.ArrayList(ConstraintEntry).init(allocator),
             .arbiters = std.ArrayList(arbiter.cpArbiter).init(allocator),
             .post_steps = std.ArrayList(PostStepCallback).init(allocator),
-            .dynamic_index = ManagedIndex.init(allocator, .bb_tree, shapeBounds, null),
-            .static_index = ManagedIndex.init(allocator, .bb_tree, shapeBounds, null),
+            .dynamic_index = ManagedIndex.init(allocator, .bb_tree, shapeBounds, null, null),
+            .static_index = ManagedIndex.init(allocator, .bb_tree, shapeBounds, null, null),
         };
     }
 
@@ -263,32 +276,68 @@ pub const cpSpace = struct {
 
     pub fn setDynamicIndex(self: *cpSpace, kind: IndexKind) !void {
         if (self.dynamic_index.kind == kind) return;
-        var replacement = ManagedIndex.init(self.allocator, kind, shapeBounds, null);
-        errdefer replacement.deinit();
-        for (self.dynamic_shapes.items) |shape| {
-            try replacement.insert(@as(*const anyopaque, @ptrCast(shape)));
-        }
-        self.dynamic_index.deinit();
-        self.dynamic_index = replacement;
+        try self.rebuildIndex(&self.dynamic_index, self.dynamic_shapes.items, kind, null);
     }
 
     pub fn setStaticIndex(self: *cpSpace, kind: IndexKind) !void {
         if (self.static_index.kind == kind) return;
-        var replacement = ManagedIndex.init(self.allocator, kind, shapeBounds, null);
-        errdefer replacement.deinit();
-        for (self.static_shapes.items) |shape| {
-            try replacement.insert(@as(*const anyopaque, @ptrCast(shape)));
-        }
-        self.static_index.deinit();
-        self.static_index = replacement;
+        try self.rebuildIndex(&self.static_index, self.static_shapes.items, kind, null);
     }
 
     pub fn reindexStatic(self: *cpSpace) void {
         self.static_index.reindex() catch {};
     }
+
+    pub fn useSpatialHash(self: *cpSpace, dim: types.cpFloat, count: usize) !void {
+        const config: space_hash_mod.Config = .{ .cell_dim = dim, .max_cells = count };
+        try self.rebuildIndex(&self.dynamic_index, self.dynamic_shapes.items, .space_hash, config);
+        try self.rebuildIndex(&self.static_index, self.static_shapes.items, .space_hash, config);
+    }
+
+    pub fn reindexShape(self: *cpSpace, shape: *shape_base.cpShape) void {
+        cacheShapeInternal(shape);
+        const ptr = @as(*const anyopaque, @ptrCast(shape));
+        switch (shape.body.body_type) {
+            .static => {
+                self.static_index.remove(ptr);
+                self.static_index.insert(ptr) catch {};
+            },
+            else => {
+                self.dynamic_index.remove(ptr);
+                self.dynamic_index.insert(ptr) catch {};
+            },
+        }
+    }
+
+    pub fn reindexShapesForBody(self: *cpSpace, body: *body_mod.cpBody) void {
+        for (self.shapes.items) |shape| {
+            if (shape.body == body) {
+                self.reindexShape(shape);
+            }
+        }
+    }
 };
 
-const Stepper = step_module.makeStepper(cpSpace, struct {});
+fn rebuildIndex(
+    self: *cpSpace,
+    index: *ManagedIndex,
+    shapes: []const *shape_base.cpShape,
+    kind: IndexKind,
+    config: ?space_hash_mod.Config,
+) !void {
+    var replacement = ManagedIndex.init(self.allocator, kind, shapeBounds, null, config);
+    errdefer replacement.deinit();
+    for (shapes) |shape| {
+        try replacement.insert(@as(*const anyopaque, @ptrCast(shape)));
+    }
+    index.deinit();
+    index.* = replacement;
+}
+const Stepper = step_module.makeStepper(cpSpace, struct {
+    pub fn cacheShape(shape: *shape_base.cpShape) void {
+        cacheShapeInternal(shape);
+    }
+});
 
 const QueryAPI = query_module.makeQueryApi(cpSpace);
 
@@ -302,6 +351,124 @@ fn removePtr(comptime T: type, list: *std.ArrayList(T), target: T) void {
     }
 }
 
+pub fn runConstraintCallback(constraints: []ConstraintEntry, dt: types.cpFloat, dt_coef: types.cpFloat, phase: ConstraintCallbackPhase) void {
+    runConstraintCallbackRange(constraints, dt, dt_coef, phase, 0, constraints.len);
+}
+
+pub fn runConstraintCallbackRange(
+    constraints: []ConstraintEntry,
+    dt: types.cpFloat,
+    dt_coef: types.cpFloat,
+    phase: ConstraintCallbackPhase,
+    start: usize,
+    end: usize,
+) void {
+    var idx = start;
+    while (idx < end) : (idx += 1) {
+        const entry = constraints[idx];
+        switch (phase) {
+            .preStep => if (entry.ops.preStep) |fn_ptr| fn_ptr(entry.payload, dt),
+            .applyCachedImpulse => if (entry.ops.applyCachedImpulse) |fn_ptr| fn_ptr(entry.payload, dt_coef),
+            .applyImpulse => if (entry.ops.applyImpulse) |fn_ptr| fn_ptr(entry.payload),
+            .postStep => if (entry.ops.postStep) |fn_ptr| fn_ptr(entry.payload),
+        }
+    }
+}
+
+pub fn updateVelocities(space: *cpSpace, dt: types.cpFloat) void {
+    for (space.bodies.items) |body| {
+        body.updateVelocity(space.gravity, space.damping, dt);
+    }
+}
+
+pub fn integratePositions(space: *cpSpace, dt: types.cpFloat) void {
+    for (space.bodies.items) |body| {
+        body.updatePosition(dt);
+    }
+}
+
+pub fn updateShapeCaches(space: *cpSpace) void {
+    for (space.shapes.items) |shape| {
+        cacheShapeInternal(shape);
+    }
+}
+
+pub fn resolveCollisions(space: *cpSpace) void {
+    space.arbiters.clearRetainingCapacity();
+    for (space.shapes.items, 0..) |shape_a, i| {
+        var j: usize = i + 1;
+        while (j < space.shapes.items.len) : (j += 1) {
+            const shape_b = space.shapes.items[j];
+            if (shape_base.cpShapeFilter.reject(shape_a.filter, shape_b.filter)) continue;
+            const result = collision.collide(shape_a, shape_b);
+            if (result.contactCount() == 0) continue;
+
+            var new_arb = arbiter.cpArbiter.init(shape_a, shape_b);
+            for (result.contacts.constSlice()) |contact| {
+                new_arb.addContact(contact);
+            }
+
+            if (space.handler.begin) |begin_func| {
+                if (!begin_func(&new_arb, space)) continue;
+            }
+            if (space.handler.preSolve) |pre_func| {
+                if (!pre_func(&new_arb, space)) continue;
+            }
+
+            space.arbiters.append(new_arb) catch {};
+            if (space.handler.postSolve) |post_func| {
+                post_func(&new_arb, space);
+            }
+        }
+    }
+}
+
+pub fn resolveArbiters(space: *cpSpace) void {
+    resolveArbitersRange(space, 0, space.arbiters.items.len);
+}
+
+pub fn resolveArbitersRange(space: *cpSpace, start: usize, end: usize) void {
+    var idx = start;
+    while (idx < end) : (idx += 1) {
+        var arb_ptr = &space.arbiters.items[idx];
+        const shape_a = arb_ptr.shape_a;
+        const shape_b = arb_ptr.shape_b;
+        const body_a = shape_a.body;
+        const body_b = shape_b.body;
+
+        for (arb_ptr.contacts.constSlice()) |contact| {
+            if (contact.distance >= 0.0) continue;
+            const total_inv = body_a.m_inv + body_b.m_inv;
+            if (total_inv == 0.0) continue;
+
+            const penetration = -contact.distance;
+            const correction = vect.cpvmult(contact.normal, penetration);
+            body_a.p = vect.cpvsub(body_a.p, vect.cpvmult(correction, body_a.m_inv / total_inv));
+            body_b.p = vect.cpvadd(body_b.p, vect.cpvmult(correction, body_b.m_inv / total_inv));
+
+            const relative = vect.cpvsub(body_b.v, body_a.v);
+            const vel_normal = vect.cpvdot(relative, contact.normal);
+            if (vel_normal > 0.0) continue;
+            const elasticity = types.cpfmax(shape_a.elasticity, shape_b.elasticity);
+            const impulse = -(1.0 + elasticity) * vel_normal / total_inv;
+            const impulse_vec = vect.cpvmult(contact.normal, impulse);
+            body_a.v = vect.cpvsub(body_a.v, vect.cpvmult(impulse_vec, body_a.m_inv));
+            body_b.v = vect.cpvadd(body_b.v, vect.cpvmult(impulse_vec, body_b.m_inv));
+        }
+
+        if (space.handler.separate) |sep_func| {
+            sep_func(arb_ptr, space);
+        }
+    }
+}
+
+pub fn runPostSteps(space: *cpSpace) void {
+    for (space.post_steps.items) |callback| {
+        callback.func(space, callback.data);
+    }
+    space.post_steps.clearRetainingCapacity();
+}
+
 fn cacheShapeInternal(shape: *shape_base.cpShape) void {
     switch (shape.shape_type) {
         .circle => asCircle(shape).cacheBB(),
@@ -309,7 +476,6 @@ fn cacheShapeInternal(shape: *shape_base.cpShape) void {
         .poly => asPoly(shape).cacheBB(),
     }
 }
-
 fn asCircle(shape: *shape_base.cpShape) *circle.cpCircleShape {
     return @as(*circle.cpCircleShape, @ptrCast(shape));
 }
@@ -520,6 +686,59 @@ test "space enforces constraint distances" {
 
 test "space queries find overlapping shapes" {
     try testSpaceQueries();
+}
+
+test "space reindexes shapes for moved bodies" {
+    var space = cpSpace.init(std.testing.allocator);
+    defer space.deinit();
+
+    var body = body_mod.cpBody.init(1.0, 1.0);
+    body.setType(.static);
+    body.setPosition(vect.cpvzero);
+    var circle_shape = circle.cpCircleShape.init(&body, 1.0, vect.cpvzero);
+
+    try space.addBody(&body);
+    try space.addShape(&circle_shape.base);
+
+    var hits: usize = 0;
+    const Counter = struct {
+        pub var out: *usize = undefined;
+        pub fn cb(_: *shape_base.cpShape, _: vect.cpVect, _: types.cpFloat) void {
+            out.* += 1;
+        }
+    };
+    Counter.out = &hits;
+
+    space.pointQuery(vect.cpvzero, shape_base.cpShapeFilter.all(), Counter.cb);
+    try std.testing.expectEqual(@as(usize, 1), hits);
+
+    body.setPosition(vect.cpv(10.0, 0.0));
+    hits = 0;
+    space.reindexShapesForBody(&body);
+
+    space.pointQuery(vect.cpvzero, shape_base.cpShapeFilter.all(), Counter.cb);
+    try std.testing.expectEqual(@as(usize, 0), hits);
+
+    space.pointQuery(vect.cpv(10.0, 0.0), shape_base.cpShapeFilter.all(), Counter.cb);
+    try std.testing.expectEqual(@as(usize, 1), hits);
+}
+
+test "space swaps indices to spatial hash" {
+    var space = cpSpace.init(std.testing.allocator);
+    defer space.deinit();
+
+    var body = body_mod.cpBody.init(1.0, 1.0);
+    var circle_shape = circle.cpCircleShape.init(&body, 1.0, vect.cpvzero);
+
+    try space.addBody(&body);
+    try space.addShape(&circle_shape.base);
+
+    try space.useSpatialHash(25.0, 64);
+
+    try std.testing.expectEqual(IndexKind.space_hash, space.dynamic_index.kind);
+    try std.testing.expectEqual(IndexKind.space_hash, space.static_index.kind);
+    try std.testing.expectEqual(space.dynamic_shapes.items.len, space.dynamic_index.count());
+    try std.testing.expectEqual(space.static_shapes.items.len, space.static_index.count());
 }
 
 test "space executes post-step callbacks" {

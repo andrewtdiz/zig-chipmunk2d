@@ -26,9 +26,9 @@ Derived from `FeedbackSummary.md`, `Feedback/Feedback_*.md`, `TaskList.md`, `Mig
     - [ ] Flesh out `cpConstraint` base methods (`preStep`, `applyCachedImpulse`, `applyImpulse`) and wire them into joints/constraints.
     - [ ] Remove per-collision arena allocations; rely on space-level allocators for temporary data.
 
-- [ ] **Advanced Modules & Multithreading**
-    - [ ] Implement a true multithreaded `cpHastySpace` using `std.Thread` and work queues.
-    - [ ] Add the missing `space_hash.zig` / `sweep1d.zig` source files referenced in the migration plan.
+- [x] **Advanced Modules & Multithreading**
+    - [x] Implement a true multithreaded `cpHastySpace` using `std.Thread` and work queues.
+    - [x] Add the missing `space_hash.zig` / `sweep1d.zig` source files referenced in the migration plan.
 
 - [ ] **Verification & Testing Enhancements**
     - [ ] Create cross-implementation tests that call the original C library via `@cImport` for collisions, solver steps, and constraints.
