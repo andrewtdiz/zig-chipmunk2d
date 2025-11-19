@@ -19,6 +19,13 @@ pub const ConstraintOps = struct {
     postStep: ?fn (*anyopaque) void = null,
 };
 
+pub const ConstraintCallbackPhase = enum {
+    preStep,
+    applyCachedImpulse,
+    applyImpulse,
+    postStep,
+};
+
 pub const ConstraintEntry = struct {
     constraint: *constraint_base.cpConstraint,
     payload: *anyopaque,
@@ -168,9 +175,22 @@ fn removePtr(comptime T: type, list: *std.ArrayList(T), target: T) void {
     }
 }
 
-fn runConstraintCallback(constraints: []ConstraintEntry, dt: types.cpFloat, dt_coef: types.cpFloat, comptime which: enum { preStep, applyCachedImpulse, applyImpulse, postStep }) void {
-    for (constraints) |entry| {
-        switch (which) {
+pub fn runConstraintCallback(constraints: []ConstraintEntry, dt: types.cpFloat, dt_coef: types.cpFloat, phase: ConstraintCallbackPhase) void {
+    runConstraintCallbackRange(constraints, dt, dt_coef, phase, 0, constraints.len);
+}
+
+pub fn runConstraintCallbackRange(
+    constraints: []ConstraintEntry,
+    dt: types.cpFloat,
+    dt_coef: types.cpFloat,
+    phase: ConstraintCallbackPhase,
+    start: usize,
+    end: usize,
+) void {
+    var idx = start;
+    while (idx < end) : (idx += 1) {
+        const entry = constraints[idx];
+        switch (phase) {
             .preStep => if (entry.ops.preStep) |fn_ptr| fn_ptr(entry.payload, dt),
             .applyCachedImpulse => if (entry.ops.applyCachedImpulse) |fn_ptr| fn_ptr(entry.payload, dt_coef),
             .applyImpulse => if (entry.ops.applyImpulse) |fn_ptr| fn_ptr(entry.payload),
@@ -179,19 +199,19 @@ fn runConstraintCallback(constraints: []ConstraintEntry, dt: types.cpFloat, dt_c
     }
 }
 
-fn updateVelocities(space: *cpSpace, dt: types.cpFloat) void {
+pub fn updateVelocities(space: *cpSpace, dt: types.cpFloat) void {
     for (space.bodies.items) |body| {
         body.updateVelocity(space.gravity, space.damping, dt);
     }
 }
 
-fn integratePositions(space: *cpSpace, dt: types.cpFloat) void {
+pub fn integratePositions(space: *cpSpace, dt: types.cpFloat) void {
     for (space.bodies.items) |body| {
         body.updatePosition(dt);
     }
 }
 
-fn updateShapeCaches(space: *cpSpace) void {
+pub fn updateShapeCaches(space: *cpSpace) void {
     for (space.shapes.items) |shape| {
         switch (shape.shape_type) {
             .circle => asCircle(shape).cacheBB(),
@@ -201,7 +221,7 @@ fn updateShapeCaches(space: *cpSpace) void {
     }
 }
 
-fn resolveCollisions(space: *cpSpace) void {
+pub fn resolveCollisions(space: *cpSpace) void {
     space.arbiters.clearRetainingCapacity();
     for (space.shapes.items, 0..) |shape_a, i| {
         var j: usize = i + 1;
@@ -231,14 +251,20 @@ fn resolveCollisions(space: *cpSpace) void {
     }
 }
 
-fn resolveArbiters(space: *cpSpace) void {
-    for (space.arbiters.items) |*arb| {
-        const shape_a = arb.shape_a;
-        const shape_b = arb.shape_b;
+pub fn resolveArbiters(space: *cpSpace) void {
+    resolveArbitersRange(space, 0, space.arbiters.items.len);
+}
+
+pub fn resolveArbitersRange(space: *cpSpace, start: usize, end: usize) void {
+    var idx = start;
+    while (idx < end) : (idx += 1) {
+        var arb_ptr = &space.arbiters.items[idx];
+        const shape_a = arb_ptr.shape_a;
+        const shape_b = arb_ptr.shape_b;
         const body_a = shape_a.body;
         const body_b = shape_b.body;
 
-        for (arb.contacts.constSlice()) |contact| {
+        for (arb_ptr.contacts.constSlice()) |contact| {
             if (contact.distance >= 0.0) continue;
             const total_inv = body_a.m_inv + body_b.m_inv;
             if (total_inv == 0.0) continue;
@@ -259,18 +285,17 @@ fn resolveArbiters(space: *cpSpace) void {
         }
 
         if (space.handler.separate) |sep_func| {
-            sep_func(arb, space);
+            sep_func(arb_ptr, space);
         }
     }
 }
 
-fn runPostSteps(space: *cpSpace) void {
+pub fn runPostSteps(space: *cpSpace) void {
     for (space.post_steps.items) |callback| {
         callback.func(space, callback.data);
     }
     space.post_steps.clearRetainingCapacity();
 }
-
 
 fn asCircle(shape: *shape_base.cpShape) *circle.cpCircleShape {
     return @as(*circle.cpCircleShape, @ptrCast(shape));
