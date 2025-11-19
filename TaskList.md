@@ -27,7 +27,7 @@ This document outlines the strategy for migrating the Chipmunk2D physics engine 
 - [ ] **Phase 3: Spatial Indexing & Collision Detection**
     - [x] Define Spatial Index Interface (`src/spatial_index/interface.zig`)
     - [x] Port `cpBBTree` (Spatial Index) (`src/spatial_index/bbtree.zig`)
-    - [ ] (Optional, later in migration) Port `cpSpaceHash` and `cpSweep1D` (`src/spatial_index/space_hash.zig`, `src/spatial_index/sweep1d.zig`)
+    - [x] (Optional, later in migration) Port `cpSpaceHash` and `cpSweep1D` (`src/spatial_index/space_hash.zig`, `src/spatial_index/sweep1d.zig`)
     - [ ] Port GJK & EPA Algorithms (`src/collision/collision.zig`) — still pending; current narrow-phase uses SAT/closest-point helpers only
     - [x] Implement Primitive Collision Tests
     - [x] Implement `cpCollide` Dispatch

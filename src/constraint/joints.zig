@@ -37,6 +37,7 @@ pub const PinJoint = struct {
     anchor_a: vect.cpVect,
     anchor_b: vect.cpVect,
     dist: types.cpFloat,
+    row: constraint_base.ConstraintRow = .{},
 
     pub fn init(
         a: *body_mod.cpBody,
@@ -65,6 +66,20 @@ pub const PinJoint = struct {
         const correction = vect.cpvmult(n, distance_error);
         applyLinearCorrection(self.base.a, self.base.b, correction);
     }
+
+    pub fn preStep(self: *PinJoint, dt: types.cpFloat) void {
+        const world_a = worldAnchor(self.base.a, self.anchor_a);
+        const world_b = worldAnchor(self.base.b, self.anchor_b);
+        self.base.preStepDistance(&self.row, world_a, world_b, self.dist, dt);
+    }
+
+    pub fn applyCachedImpulse(self: *PinJoint, dt_coef: types.cpFloat) void {
+        self.base.applyCachedImpulse(&self.row, dt_coef);
+    }
+
+    pub fn applyImpulse(self: *PinJoint, dt: types.cpFloat) void {
+        self.base.applyImpulse(&self.row, dt);
+    }
 };
 
 pub const SlideJoint = struct {
@@ -73,6 +88,9 @@ pub const SlideJoint = struct {
     anchor_b: vect.cpVect,
     min: types.cpFloat,
     max: types.cpFloat,
+    row: constraint_base.ConstraintRow = .{},
+    limit_active: bool = false,
+    target: types.cpFloat = 0.0,
 
     pub fn init(
         a: *body_mod.cpBody,
@@ -99,12 +117,43 @@ pub const SlideJoint = struct {
         const correction = vect.cpvmult(n, dist - target);
         applyLinearCorrection(self.base.a, self.base.b, correction);
     }
+
+    pub fn preStep(self: *SlideJoint, dt: types.cpFloat) void {
+        const world_a = worldAnchor(self.base.a, self.anchor_a);
+        const world_b = worldAnchor(self.base.b, self.anchor_b);
+        const delta = vect.cpvsub(world_b, world_a);
+        const dist = vect.cpvlength(delta);
+        self.limit_active = false;
+        var target = dist;
+        if (dist < self.min) {
+            self.limit_active = true;
+            target = self.min;
+        } else if (dist > self.max) {
+            self.limit_active = true;
+            target = self.max;
+        }
+        self.target = target;
+        if (!self.limit_active) return;
+        self.base.preStepDistance(&self.row, world_a, world_b, target, dt);
+    }
+
+    pub fn applyCachedImpulse(self: *SlideJoint, dt_coef: types.cpFloat) void {
+        if (!self.limit_active) return;
+        self.base.applyCachedImpulse(&self.row, dt_coef);
+    }
+
+    pub fn applyImpulse(self: *SlideJoint, dt: types.cpFloat) void {
+        if (!self.limit_active) return;
+        self.base.applyImpulse(&self.row, dt);
+    }
 };
 
 pub const PivotJoint = struct {
     base: constraint_base.cpConstraint,
     anchor_a: vect.cpVect,
     anchor_b: vect.cpVect,
+    row_x: constraint_base.ConstraintRow = .{},
+    row_y: constraint_base.ConstraintRow = .{},
 
     pub fn init(a: *body_mod.cpBody, b: *body_mod.cpBody, anchor_a: vect.cpVect, anchor_b: vect.cpVect) PivotJoint {
         return .{ .base = constraint_base.cpConstraint.init(a, b), .anchor_a = anchor_a, .anchor_b = anchor_b };
@@ -115,6 +164,24 @@ pub const PivotJoint = struct {
         const world_b = worldAnchor(self.base.b, self.anchor_b);
         const correction = vect.cpvsub(world_b, world_a);
         applyLinearCorrection(self.base.a, self.base.b, correction);
+    }
+
+    pub fn preStep(self: *PivotJoint, dt: types.cpFloat) void {
+        const world_a = worldAnchor(self.base.a, self.anchor_a);
+        const world_b = worldAnchor(self.base.b, self.anchor_b);
+        const delta = vect.cpvsub(world_b, world_a);
+        self.base.configureRow(&self.row_x, world_a, world_b, vect.cpv(1.0, 0.0), delta.x, dt);
+        self.base.configureRow(&self.row_y, world_a, world_b, vect.cpv(0.0, 1.0), delta.y, dt);
+    }
+
+    pub fn applyCachedImpulse(self: *PivotJoint, dt_coef: types.cpFloat) void {
+        self.base.applyCachedImpulse(&self.row_x, dt_coef);
+        self.base.applyCachedImpulse(&self.row_y, dt_coef);
+    }
+
+    pub fn applyImpulse(self: *PivotJoint, dt: types.cpFloat) void {
+        self.base.applyImpulse(&self.row_x, dt);
+        self.base.applyImpulse(&self.row_y, dt);
     }
 };
 

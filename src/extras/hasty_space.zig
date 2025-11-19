@@ -7,8 +7,8 @@ const constraint_base = @import("../constraint/constraint_base.zig");
 pub const cpHastySpace = struct {
     space: space_mod.cpSpace,
 
-    pub fn init(allocator: std.mem.Allocator) cpHastySpace {
-        return .{ .space = space_mod.cpSpace.init(allocator) };
+    pub fn init(allocator: std.mem.Allocator) !cpHastySpace {
+        return .{ .space = try space_mod.cpSpace.init(allocator) };
     }
 
     pub fn deinit(self: *cpHastySpace) void {

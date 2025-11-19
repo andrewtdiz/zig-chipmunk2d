@@ -9,12 +9,12 @@ This document consolidates the findings across `Feedback/Feedback_1.md` through 
 ## 2. Spatial Indexing & cpSpace Pipeline
 - `cpSpatialIndex` is a linear array scan and `cpBBTree` simply wraps it; `cpSpaceHash`/`cpSweep1D` were never ported. As a result, `cpSpace.step` double-loops over every shape pair, giving O(n²) collision detection instead of the documented broad-phase acceleration.
 - The `cpSpace` struct keeps only flat `ArrayList`s, omitting dynamic/static body partitions, sleeping components, stamp counters, cached arbiters, and per-shape spatial indices. There is no `space_step.zig` or `space_query.zig`, and segment queries are entirely missing.
-- `postSolve` callbacks fire during broad-phase pair traversal rather than after the solver loop, diverging from Chipmunk’s pipeline.
+- `postSolve` callbacks now run after the solver loop, but the rest of the broad-phase/sleeping pipeline still diverges from Chipmunk’s structure.
 
 ## 3. Arbiters, Constraints, and Memory Management
-- Arbiters are recreated every frame with no cache or pooled contact buffers. `cpArbiter` is a bounded array of contacts without warm-started impulses or persistence hooks, so cached impulses and deterministic contact reuse are lost.
-- Constraint base methods (`preStep`, `applyCachedImpulse`, `applyImpulse`) are stubs; joint implementations mostly perform post-step position corrections, meaning the constraint solver phases mandated by the migration plan are unimplemented.
-- Polygon collisions allocate temporary arenas from `std.heap.page_allocator` instead of reusing the space allocator. The planned layered allocator strategy (`util/pool.zig`, contact rings) never materialized.
+- Arbiters now use pooled contact buffers and retain cached impulses so contact reuse and warm-starting match Chipmunk’s behavior.
+- Constraint base methods and joint implementations participate in the solver phases (`preStep`, `applyCachedImpulse`, `applyImpulse`) instead of only performing post-step corrections.
+- Collision helpers allocate through the space allocator with pooled buffers instead of per-collision arenas, aligning with the layered allocator strategy.
 
 ## 4. Advanced Modules & Testing
 - `cpHastySpace` merely calls the serial `cpSpace.step` and leaves the multithreaded solver unimplemented.

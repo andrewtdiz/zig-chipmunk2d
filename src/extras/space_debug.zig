@@ -106,7 +106,8 @@ pub fn cpSpaceDebugDraw(space: *space_mod.cpSpace, options: cpSpaceDebugDrawOpti
 
     if (options.flags.draw_collision_points) {
         for (space.arbiters.items) |arb| {
-            for (arb.contacts.constSlice()) |contact| {
+            for (arb.contacts()) |contact_state| {
+                const contact = contact_state.contact;
                 const start = contact.point;
                 const end = vect.cpvadd(contact.point, vect.cpvmult(contact.normal, 2.0));
                 options.drawSegment(start, end, options.collisionPointColor, options.data);
@@ -116,7 +117,7 @@ pub fn cpSpaceDebugDraw(space: *space_mod.cpSpace, options: cpSpaceDebugDrawOpti
 }
 
 test "space debug draw triggers callbacks" {
-    var space = space_mod.cpSpace.init(std.testing.allocator);
+    var space = try space_mod.cpSpace.init(std.testing.allocator);
     defer space.deinit();
 
     var body_a = shape_base.body_mod.cpBody.init(1.0, 1.0);

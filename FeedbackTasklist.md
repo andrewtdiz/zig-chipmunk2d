@@ -4,27 +4,27 @@ Derived from `FeedbackSummary.md`, `Feedback/Feedback_*.md`, `TaskList.md`, `Mig
 
 ## Task Checklist
 
-- [ ] **Collision Detection Completion**
-    - [ ] Port GJK/EPA narrow-phase (chipmunk2d `cpCollision.c`) with cached collision IDs.
-    - [ ] Implement `ClosestPointsNew`, `ContactPoints`, and multi-contact clipping so arbiters receive full penetration data.
-    - [ ] Fix segment–segment and segment–poly dispatch to use the proper narrow-phase routines (no `bbOverlap` fallback).
+- [x] **Collision Detection Completion**
+    - [x] Port GJK/EPA narrow-phase (chipmunk2d `cpCollision.c`) with cached collision IDs.
+    - [x] Implement `ClosestPointsNew`, `ContactPoints`, and multi-contact clipping so arbiters receive full penetration data.
+    - [x] Fix segment–segment and segment–poly dispatch to use the proper narrow-phase routines (no `bbOverlap` fallback).
 
-- [ ] **Spatial Indexing & cpSpace Workflow**
-    - [ ] Replace the placeholder `cpSpatialIndex`/`cpBBTree` with real bounding-box tree logic (fat-leaf heuristics, rebalancing).
-    - [ ] Port `cpSpaceHash` and `cpSweep1D` modules and integrate them as optional indices.
-    - [ ] Integrate spatial indices into `cpSpace.step` (reindex, broad-phase queries) instead of double-looping all shapes.
-    - [ ] Reintroduce `space_step.zig` and `space_query.zig` modules to mirror the C pipeline and expose point/segment/bb/shape queries.
+- [x] **Spatial Indexing & cpSpace Workflow**
+    - [x] Replace the placeholder `cpSpatialIndex`/`cpBBTree` with real bounding-box tree logic (fat-leaf heuristics, rebalancing).
+    - [x] Port `cpSpaceHash` and `cpSweep1D` modules and integrate them as optional indices.
+    - [x] Integrate spatial indices into `cpSpace.step` (reindex, broad-phase queries) instead of double-looping all shapes.
+    - [x] Reintroduce `space_step.zig` and `space_query.zig` modules to mirror the C pipeline and expose point/segment/bb/shape queries.
 
 - [ ] **cpSpace Structure & Sleeping**
     - [ ] Split bodies and shapes into dynamic/static collections with sleeping components and stamp tracking.
     - [ ] Maintain cached arbiter maps keyed by shape pairs; add activation logic to wake sleeping islands.
     - [ ] Ensure `postSolve` callbacks run after the solver iterations, matching Chipmunk’s ordering.
 
-- [ ] **Arbiters, Constraints, and Memory Pools**
-    - [ ] Implement contact buffer pools / arbiter pools (`util/pool.zig`) tied to the space allocator.
-    - [ ] Enhance `cpArbiter` to store cached impulses, friction, and bias data; expose warm-start hooks.
-    - [ ] Flesh out `cpConstraint` base methods (`preStep`, `applyCachedImpulse`, `applyImpulse`) and wire them into joints/constraints.
-    - [ ] Remove per-collision arena allocations; rely on space-level allocators for temporary data.
+- [x] **Arbiters, Constraints, and Memory Pools**
+    - [x] Implement contact buffer pools / arbiter pools (`util/pool.zig`) tied to the space allocator.
+    - [x] Enhance `cpArbiter` to store cached impulses, friction, and bias data; expose warm-start hooks.
+    - [x] Flesh out `cpConstraint` base methods (`preStep`, `applyCachedImpulse`, `applyImpulse`) and wire them into joints/constraints.
+    - [x] Remove per-collision arena allocations; rely on space-level allocators for temporary data.
 
 - [ ] **Advanced Modules & Multithreading**
     - [ ] Implement a true multithreaded `cpHastySpace` using `std.Thread` and work queues.
