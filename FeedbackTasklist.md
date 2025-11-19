@@ -4,10 +4,10 @@ Derived from `FeedbackSummary.md`, `Feedback/Feedback_*.md`, `TaskList.md`, `Mig
 
 ## Task Checklist
 
-- [ ] **Collision Detection Completion**
-    - [ ] Port GJK/EPA narrow-phase (chipmunk2d `cpCollision.c`) with cached collision IDs.
-    - [ ] Implement `ClosestPointsNew`, `ContactPoints`, and multi-contact clipping so arbiters receive full penetration data.
-    - [ ] Fix segment–segment and segment–poly dispatch to use the proper narrow-phase routines (no `bbOverlap` fallback).
+- [x] **Collision Detection Completion**
+    - [x] Port GJK/EPA narrow-phase (chipmunk2d `cpCollision.c`) with cached collision IDs.
+    - [x] Implement `ClosestPointsNew`, `ContactPoints`, and multi-contact clipping so arbiters receive full penetration data.
+    - [x] Fix segment–segment and segment–poly dispatch to use the proper narrow-phase routines (no `bbOverlap` fallback).
 
 - [x] **Spatial Indexing & cpSpace Workflow**
     - [x] Replace the placeholder `cpSpatialIndex`/`cpBBTree` with real bounding-box tree logic (fat-leaf heuristics, rebalancing).

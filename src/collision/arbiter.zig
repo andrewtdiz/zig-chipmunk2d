@@ -50,8 +50,8 @@ pub fn testArbiterAccumulation() !void {
     var arbiter = cpArbiter.init(&shape_a, &shape_b);
     try std.testing.expectEqual(@as(usize, 0), arbiter.contactCount());
 
-    arbiter.addContact(.{ .point = vect.cpvzero, .normal = vect.cpv(1.0, 0.0), .distance = -0.25 });
-    arbiter.addContact(.{ .point = vect.cpv(0.0, 1.0), .normal = vect.cpv(0.0, 1.0), .distance = 0.1 });
+    arbiter.addContact(.{ .point = vect.cpvzero, .normal = vect.cpv(1.0, 0.0), .distance = -0.25, .hash = 0 });
+    arbiter.addContact(.{ .point = vect.cpv(0.0, 1.0), .normal = vect.cpv(0.0, 1.0), .distance = 0.1, .hash = 0 });
 
     try std.testing.expectEqual(@as(usize, 2), arbiter.contactCount());
     try std.testing.expectApproxEqAbs(0.25, arbiter.penetrationDepth(), 1e-6);
