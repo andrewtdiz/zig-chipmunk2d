@@ -185,7 +185,7 @@ pub const cpSpace = struct {
             if (shape == target) continue;
             const mark = self.scratch.state();
             defer self.scratch.restore(mark);
-            const result = collision.collide(self.scratch.allocator(), target, shape);
+            const result = collision.collide(target, shape);
             if (result.contactCount() > 0) {
                 func(shape, result);
             }
@@ -247,7 +247,7 @@ fn buildArbiters(space: *cpSpace, dt: types.cpFloat, dt_coef: types.cpFloat) voi
             if (shape_base.cpShapeFilter.reject(shape_a.filter, shape_b.filter)) continue;
             const mark = space.scratch.state();
             defer space.scratch.restore(mark);
-            const result = collision.collide(space.scratch.allocator(), shape_a, shape_b);
+            const result = collision.collide(shape_a, shape_b);
             if (result.contactCount() == 0) continue;
 
             const pair = makePair(shape_a, shape_b);

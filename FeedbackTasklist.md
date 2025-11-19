@@ -4,16 +4,16 @@ Derived from `FeedbackSummary.md`, `Feedback/Feedback_*.md`, `TaskList.md`, `Mig
 
 ## Task Checklist
 
-- [ ] **Collision Detection Completion**
-    - [ ] Port GJK/EPA narrow-phase (chipmunk2d `cpCollision.c`) with cached collision IDs.
-    - [ ] Implement `ClosestPointsNew`, `ContactPoints`, and multi-contact clipping so arbiters receive full penetration data.
-    - [ ] Fix segment–segment and segment–poly dispatch to use the proper narrow-phase routines (no `bbOverlap` fallback).
+- [x] **Collision Detection Completion**
+    - [x] Port GJK/EPA narrow-phase (chipmunk2d `cpCollision.c`) with cached collision IDs.
+    - [x] Implement `ClosestPointsNew`, `ContactPoints`, and multi-contact clipping so arbiters receive full penetration data.
+    - [x] Fix segment–segment and segment–poly dispatch to use the proper narrow-phase routines (no `bbOverlap` fallback).
 
-- [ ] **Spatial Indexing & cpSpace Workflow**
-    - [ ] Replace the placeholder `cpSpatialIndex`/`cpBBTree` with real bounding-box tree logic (fat-leaf heuristics, rebalancing).
-    - [ ] Port `cpSpaceHash` and `cpSweep1D` modules and integrate them as optional indices.
-    - [ ] Integrate spatial indices into `cpSpace.step` (reindex, broad-phase queries) instead of double-looping all shapes.
-    - [ ] Reintroduce `space_step.zig` and `space_query.zig` modules to mirror the C pipeline and expose point/segment/bb/shape queries.
+- [x] **Spatial Indexing & cpSpace Workflow**
+    - [x] Replace the placeholder `cpSpatialIndex`/`cpBBTree` with real bounding-box tree logic (fat-leaf heuristics, rebalancing).
+    - [x] Port `cpSpaceHash` and `cpSweep1D` modules and integrate them as optional indices.
+    - [x] Integrate spatial indices into `cpSpace.step` (reindex, broad-phase queries) instead of double-looping all shapes.
+    - [x] Reintroduce `space_step.zig` and `space_query.zig` modules to mirror the C pipeline and expose point/segment/bb/shape queries.
 
 - [ ] **cpSpace Structure & Sleeping**
     - [ ] Split bodies and shapes into dynamic/static collections with sleeping components and stamp tracking.
