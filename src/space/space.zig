@@ -11,7 +11,13 @@ const constraint_base = @import("../constraint/constraint_base.zig");
 const joints = @import("../constraint/joints.zig");
 const collision = @import("../collision/collision.zig");
 const arbiter = @import("../collision/arbiter.zig");
+const spatial_interface = @import("../spatial_index/interface.zig");
+const bbtree = @import("../spatial_index/bbtree.zig");
+const space_hash_mod = @import("../spatial_index/space_hash.zig");
+const sweep_mod = @import("../spatial_index/sweep1d.zig");
+const query_module = @import("space_query.zig");
 const pool = @import("../util/pool.zig");
+const step_module = @import("space_step.zig");
 
 const ShapePair = struct { a: usize, b: usize };
 
@@ -41,6 +47,97 @@ pub const CollisionHandler = struct {
     separate: ?fn (*arbiter.cpArbiter, *cpSpace) void = null,
 };
 
+pub const IndexKind = enum { bb_tree, space_hash, sweep1d };
+
+const IndexUnion = union(IndexKind) {
+    bb_tree: bbtree.cpBBTree,
+    space_hash: space_hash_mod.cpSpaceHash,
+    sweep1d: sweep_mod.cpSweep1D,
+};
+
+pub const ManagedIndex = struct {
+    allocator: std.mem.Allocator,
+    bounds_func: *const spatial_interface.BoundsFunc,
+    context: ?*const anyopaque,
+    kind: IndexKind,
+    storage: IndexUnion,
+
+    pub fn init(allocator: std.mem.Allocator, kind: IndexKind, bounds_func: *const spatial_interface.BoundsFunc, context: ?*const anyopaque) ManagedIndex {
+        return .{
+            .allocator = allocator,
+            .bounds_func = bounds_func,
+            .context = context,
+            .kind = kind,
+            .storage = switch (kind) {
+                .bb_tree => IndexUnion{ .bb_tree = bbtree.cpBBTree.init(allocator, bounds_func, context) },
+                .space_hash => IndexUnion{ .space_hash = space_hash_mod.cpSpaceHash.init(allocator, bounds_func, context, .{}) },
+                .sweep1d => IndexUnion{ .sweep1d = sweep_mod.cpSweep1D.init(allocator, bounds_func, context) },
+            },
+        };
+    }
+
+    pub fn deinit(self: *ManagedIndex) void {
+        switch (self.kind) {
+            .bb_tree => self.storage.bb_tree.deinit(),
+            .space_hash => self.storage.space_hash.deinit(),
+            .sweep1d => self.storage.sweep1d.deinit(),
+        }
+    }
+
+    pub fn insert(self: *ManagedIndex, object: *const anyopaque) !void {
+        switch (self.kind) {
+            .bb_tree => try self.storage.bb_tree.insert(object),
+            .space_hash => try self.storage.space_hash.insert(object),
+            .sweep1d => try self.storage.sweep1d.insert(object),
+        }
+    }
+
+    pub fn remove(self: *ManagedIndex, object: *const anyopaque) void {
+        switch (self.kind) {
+            .bb_tree => self.storage.bb_tree.remove(object),
+            .space_hash => self.storage.space_hash.remove(object),
+            .sweep1d => self.storage.sweep1d.remove(object),
+        }
+    }
+
+    pub fn reindex(self: *ManagedIndex) !void {
+        switch (self.kind) {
+            .bb_tree => try self.storage.bb_tree.reindex(),
+            .space_hash => try self.storage.space_hash.reindex(),
+            .sweep1d => try self.storage.sweep1d.reindex(),
+        }
+    }
+
+    pub fn query(self: *ManagedIndex, bounds: bb.cpBB, func: *const spatial_interface.QueryFunc, data: ?*anyopaque) void {
+        switch (self.kind) {
+            .bb_tree => self.storage.bb_tree.query(bounds, func, data),
+            .space_hash => self.storage.space_hash.query(bounds, func, data),
+            .sweep1d => self.storage.sweep1d.query(bounds, func, data),
+        }
+    }
+
+    pub fn each(self: *ManagedIndex, func: *const spatial_interface.EachFunc, data: ?*anyopaque) void {
+        switch (self.kind) {
+            .bb_tree => self.storage.bb_tree.each(func, data),
+            .space_hash => self.storage.space_hash.each(func, data),
+            .sweep1d => self.storage.sweep1d.each(func, data),
+        }
+    }
+
+    pub fn count(self: ManagedIndex) usize {
+        return switch (self.kind) {
+            .bb_tree => self.storage.bb_tree.count(),
+            .space_hash => self.storage.space_hash.count(),
+            .sweep1d => self.storage.sweep1d.count(),
+        };
+    }
+};
+
+fn shapeBounds(ptr: *const anyopaque, _: ?*const anyopaque) bb.cpBB {
+    const shape = @as(*const shape_base.cpShape, @ptrCast(ptr));
+    return shape.bbValue();
+}
+
 pub const cpSpace = struct {
     allocator: std.mem.Allocator,
     gravity: vect.cpVect = vect.cpvzero,
@@ -49,10 +146,14 @@ pub const cpSpace = struct {
 
     bodies: std.ArrayList(*body_mod.cpBody),
     shapes: std.ArrayList(*shape_base.cpShape),
+    dynamic_shapes: std.ArrayList(*shape_base.cpShape),
+    static_shapes: std.ArrayList(*shape_base.cpShape),
     constraints: std.ArrayList(ConstraintEntry),
     arbiters: std.ArrayList(*arbiter.cpArbiter),
     post_steps: std.ArrayList(PostStepCallback),
     handler: CollisionHandler = .{},
+    dynamic_index: ManagedIndex,
+    static_index: ManagedIndex,
     arbiter_pool: pool.ObjectPool(arbiter.cpArbiter),
     contact_pool: pool.ObjectPool(arbiter.ContactBuffer),
     scratch: std.heap.ArenaAllocator,
@@ -65,10 +166,14 @@ pub const cpSpace = struct {
             .allocator = allocator,
             .bodies = std.ArrayList(*body_mod.cpBody).init(allocator),
             .shapes = std.ArrayList(*shape_base.cpShape).init(allocator),
+            .dynamic_shapes = std.ArrayList(*shape_base.cpShape).init(allocator),
+            .static_shapes = std.ArrayList(*shape_base.cpShape).init(allocator),
             .constraints = std.ArrayList(ConstraintEntry).init(allocator),
             .arbiters = std.ArrayList(*arbiter.cpArbiter).init(allocator),
             .post_steps = std.ArrayList(PostStepCallback).init(allocator),
             .handler = .{},
+            .dynamic_index = ManagedIndex.init(allocator, .bb_tree, shapeBounds, null),
+            .static_index = ManagedIndex.init(allocator, .bb_tree, shapeBounds, null),
             .arbiter_pool = undefined,
             .contact_pool = undefined,
             .scratch = std.heap.ArenaAllocator.init(allocator),
@@ -78,6 +183,8 @@ pub const cpSpace = struct {
         errdefer space.scratch.deinit();
         errdefer space.arbiter_map.deinit();
         errdefer space.stale_pairs.deinit();
+        errdefer space.dynamic_index.deinit();
+        errdefer space.static_index.deinit();
         space.arbiter_pool = try pool.ObjectPool(arbiter.cpArbiter).init(allocator, 32);
         errdefer space.arbiter_pool.deinit();
         space.contact_pool = try pool.ObjectPool(arbiter.ContactBuffer).init(allocator, 64);
@@ -91,9 +198,13 @@ pub const cpSpace = struct {
         }
         self.bodies.deinit();
         self.shapes.deinit();
+        self.dynamic_shapes.deinit();
+        self.static_shapes.deinit();
         self.constraints.deinit();
         self.arbiters.deinit();
         self.post_steps.deinit();
+        self.dynamic_index.deinit();
+        self.static_index.deinit();
         self.arbiter_pool.deinit();
         self.contact_pool.deinit();
         self.scratch.deinit();
@@ -111,10 +222,33 @@ pub const cpSpace = struct {
 
     pub fn addShape(self: *cpSpace, shape: *shape_base.cpShape) !void {
         try self.shapes.append(shape);
+        cacheShapeInternal(shape);
+        const ptr = @as(*const anyopaque, @ptrCast(shape));
+        switch (shape.body.body_type) {
+            .static => {
+                try self.static_shapes.append(shape);
+                try self.static_index.insert(ptr);
+            },
+            else => {
+                try self.dynamic_shapes.append(shape);
+                try self.dynamic_index.insert(ptr);
+            },
+        }
     }
 
     pub fn removeShape(self: *cpSpace, shape: *shape_base.cpShape) void {
         removePtr(*shape_base.cpShape, &self.shapes, shape);
+        const ptr = @as(*const anyopaque, @ptrCast(shape));
+        switch (shape.body.body_type) {
+            .static => {
+                removePtr(*shape_base.cpShape, &self.static_shapes, shape);
+                self.static_index.remove(ptr);
+            },
+            else => {
+                removePtr(*shape_base.cpShape, &self.dynamic_shapes, shape);
+                self.dynamic_index.remove(ptr);
+            },
+        }
     }
 
     pub fn addConstraint(self: *cpSpace, constraint: *constraint_base.cpConstraint, ops: ConstraintOps, payload: ?*anyopaque) !void {
@@ -147,6 +281,8 @@ pub const cpSpace = struct {
         runConstraintCallback(self.constraints.items, dt, dt_coef, .preStep);
         runConstraintCallback(self.constraints.items, dt, dt_coef, .applyCachedImpulse);
         updateShapeCaches(self);
+        self.dynamic_index.reindex() catch {};
+        self.static_index.reindex() catch {};
         buildArbiters(self, dt, dt_coef);
 
         var iteration: usize = 0;
@@ -162,36 +298,51 @@ pub const cpSpace = struct {
     }
 
     pub fn pointQuery(self: *const cpSpace, point: vect.cpVect, filter: shape_base.cpShapeFilter, func: fn (*shape_base.cpShape, vect.cpVect, types.cpFloat) void) void {
-        for (self.shapes.items) |shape| {
-            if (shape_base.cpShapeFilter.reject(shape.filter, filter)) continue;
-            const distance = pointDistance(shape, point);
-            if (distance <= 0.0) {
-                func(shape, point, distance);
-            }
-        }
+        QueryAPI.pointQuery(self, point, filter, func);
     }
 
     pub fn bbQuery(self: *const cpSpace, bounds: bb.cpBB, filter: shape_base.cpShapeFilter, func: fn (*shape_base.cpShape) void) void {
-        for (self.shapes.items) |shape| {
-            if (shape_base.cpShapeFilter.reject(shape.filter, filter)) continue;
-            if (bb.cpBBIntersects(shape.bbValue(), bounds)) {
-                func(shape);
-            }
-        }
+        QueryAPI.bbQuery(self, bounds, filter, func);
+    }
+
+    pub fn segmentQuery(self: *const cpSpace, start: vect.cpVect, end: vect.cpVect, radius: types.cpFloat, filter: shape_base.cpShapeFilter, func: fn (*shape_base.cpShape, vect.cpVect, vect.cpVect, types.cpFloat) void) void {
+        QueryAPI.segmentQuery(self, start, end, radius, filter, func);
     }
 
     pub fn shapeQuery(self: *const cpSpace, target: *shape_base.cpShape, func: fn (*shape_base.cpShape, collision.CollisionResult) void) void {
-        for (self.shapes.items) |shape| {
-            if (shape == target) continue;
-            const mark = self.scratch.state();
-            defer self.scratch.restore(mark);
-            const result = collision.collide(target, shape);
-            if (result.contactCount() > 0) {
-                func(shape, result);
-            }
+        QueryAPI.shapeQuery(self, target, func);
+    }
+
+    pub fn setDynamicIndex(self: *cpSpace, kind: IndexKind) !void {
+        if (self.dynamic_index.kind == kind) return;
+        var replacement = ManagedIndex.init(self.allocator, kind, shapeBounds, null);
+        errdefer replacement.deinit();
+        for (self.dynamic_shapes.items) |shape| {
+            try replacement.insert(@as(*const anyopaque, @ptrCast(shape)));
         }
+        self.dynamic_index.deinit();
+        self.dynamic_index = replacement;
+    }
+
+    pub fn setStaticIndex(self: *cpSpace, kind: IndexKind) !void {
+        if (self.static_index.kind == kind) return;
+        var replacement = ManagedIndex.init(self.allocator, kind, shapeBounds, null);
+        errdefer replacement.deinit();
+        for (self.static_shapes.items) |shape| {
+            try replacement.insert(@as(*const anyopaque, @ptrCast(shape)));
+        }
+        self.static_index.deinit();
+        self.static_index = replacement;
+    }
+
+    pub fn reindexStatic(self: *cpSpace) void {
+        self.static_index.reindex() catch {};
     }
 };
+
+const Stepper = step_module.makeStepper(cpSpace, struct {});
+
+const QueryAPI = query_module.makeQueryApi(cpSpace);
 
 fn removePtr(comptime T: type, list: *std.ArrayList(T), target: T) void {
     var i: usize = 0;
@@ -345,7 +496,13 @@ fn makePair(a: *shape_base.cpShape, b: *shape_base.cpShape) ShapePair {
     return .{ .a = @intFromPtr(a), .b = @intFromPtr(b) };
 }
 
-
+fn cacheShapeInternal(shape: *shape_base.cpShape) void {
+    switch (shape.shape_type) {
+        .circle => asCircle(shape).cacheBB(),
+        .segment => asSegment(shape).cacheBB(),
+        .poly => asPoly(shape).cacheBB(),
+    }
+}
 fn asCircle(shape: *shape_base.cpShape) *circle.cpCircleShape {
     return @as(*circle.cpCircleShape, @ptrCast(shape));
 }
@@ -360,52 +517,6 @@ fn asPoly(shape: *shape_base.cpShape) *poly.cpPolyShape {
 
 fn castPayload(comptime T: type, payload: *anyopaque) *T {
     return @as(*T, @ptrCast(payload));
-}
-
-fn pointDistance(shape: *const shape_base.cpShape, point: vect.cpVect) types.cpFloat {
-    return switch (shape.shape_type) {
-        .circle => distanceToCircle(asCircle(shape), point),
-        .segment => distanceToSegment(asSegment(shape), point),
-        .poly => distanceToPoly(asPoly(shape), point),
-    };
-}
-
-fn distanceToCircle(shape: *const circle.cpCircleShape, point: vect.cpVect) types.cpFloat {
-    const center = vect.cpvadd(shape.base.body.p, vect.cpvrotate(shape.offset, shape.base.body.rotationVector()));
-    return vect.cpvlength(vect.cpvsub(point, center)) - shape.radius;
-}
-
-fn distanceToSegment(shape: *const segment.cpSegmentShape, point: vect.cpVect) types.cpFloat {
-    const rot = shape.base.body.rotationVector();
-    const a = vect.cpvadd(shape.base.body.p, vect.cpvrotate(shape.a, rot));
-    const b = vect.cpvadd(shape.base.body.p, vect.cpvrotate(shape.b, rot));
-    const nearest = closestPoint(point, a, b);
-    return vect.cpvlength(vect.cpvsub(point, nearest)) - shape.radius;
-}
-
-fn closestPoint(p: vect.cpVect, a: vect.cpVect, b_: vect.cpVect) vect.cpVect {
-    const ab = vect.cpvsub(b_, a);
-    const denom = vect.cpvdot(ab, ab);
-    if (denom == 0.0) return a;
-    const t = types.cpfclamp(vect.cpvdot(vect.cpvsub(p, a), ab) / denom, 0.0, 1.0);
-    return vect.cpvadd(a, vect.cpvmult(ab, t));
-}
-
-fn distanceToPoly(shape: *const poly.cpPolyShape, point: vect.cpVect) types.cpFloat {
-    var inside = true;
-    var min_dist = types.CP_INFINITY;
-    const rot = shape.base.body.rotationVector();
-    for (shape.vertices, 0..) |vertex, i| {
-        const world_a = vect.cpvadd(shape.base.body.p, vect.cpvrotate(vertex, rot));
-        const world_b = vect.cpvadd(shape.base.body.p, vect.cpvrotate(shape.vertices[(i + 1) % shape.vertices.len], rot));
-        const edge = vect.cpvsub(world_b, world_a);
-        const normal = vect.cpvperp(edge);
-        const dist = vect.cpvdot(normal, vect.cpvsub(point, world_a));
-        if (dist > 0.0) inside = false;
-        const projected = closestPoint(point, world_a, world_b);
-        min_dist = types.cpfmin(min_dist, vect.cpvlength(vect.cpvsub(point, projected)));
-    }
-    return if (inside) -min_dist else min_dist;
 }
 
 pub fn opsForPinJoint(_: *joints.PinJoint) ConstraintOps {

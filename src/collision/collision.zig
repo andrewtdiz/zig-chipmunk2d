@@ -8,7 +8,6 @@ const poly = @import("../shape/poly.zig");
 const shape_base = @import("../shape/shape_base.zig");
 
 pub const max_contacts = 4;
-
 const MAX_GJK_ITERATIONS = 30;
 const MAX_EPA_ITERATIONS = 30;
 const WARN_GJK_ITERATIONS = 20;
