@@ -183,6 +183,7 @@ Based on `3-Collision Detection System.md` and `cpCollision.c`:
 
 ### 6.2 GJK and EPA
 
+- **Status**: Not yet ported. The current Zig narrow-phase uses SAT-style polygon tests and closest-point helpers for the covered shape pairs; GJK/EPA will be brought over in a later Phase 3 milestone to regain full parity with Chipmunk's penetration resolution path.
 - Translate the GJK implementation to Zig:
   - Support for cached collision IDs (`cpCollisionID`), Minkowski support points, recursion/iteration structure.
   - Early exit conditions and tolerance matching the C code.

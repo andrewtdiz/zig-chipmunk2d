@@ -17,21 +17,21 @@ This document outlines the strategy for migrating the Chipmunk2D physics engine 
     - [x] Port Transforms (`src/core/transform.zig`: `cpTransform`, any matrix helpers)
 
 - [ ] **Phase 2: Physics Primitives**
-    - [ ] Port Rigid Bodies (`src/space/body.zig`: `cpBody` struct & logic)
-    - [ ] Define Shape Interface/Base (`src/shape/shape_base.zig`)
-    - [ ] Implement `CircleShape` (`src/shape/circle.zig`)
-    - [ ] Implement `SegmentShape` (`src/shape/segment.zig`)
-    - [ ] Implement `PolyShape` (`src/shape/poly.zig`)
-    - [ ] Define Constraint Interface/Base (`src/constraint/constraint_base.zig`)
+    - [x] Port Rigid Bodies (`src/space/body.zig`: `cpBody` struct & logic)
+    - [x] Define Shape Interface/Base (`src/shape/shape_base.zig`)
+    - [x] Implement `CircleShape` (`src/shape/circle.zig`)
+    - [x] Implement `SegmentShape` (`src/shape/segment.zig`)
+    - [x] Implement `PolyShape` (`src/shape/poly.zig`)
+    - [x] Define Constraint Interface/Base (`src/constraint/constraint_base.zig`)
 
 - [ ] **Phase 3: Spatial Indexing & Collision Detection**
-    - [ ] Define Spatial Index Interface (`src/spatial_index/interface.zig`)
-    - [ ] Port `cpBBTree` (Spatial Index) (`src/spatial_index/bbtree.zig`)
+    - [x] Define Spatial Index Interface (`src/spatial_index/interface.zig`)
+    - [x] Port `cpBBTree` (Spatial Index) (`src/spatial_index/bbtree.zig`)
     - [ ] (Optional, later in migration) Port `cpSpaceHash` and `cpSweep1D` (`src/spatial_index/space_hash.zig`, `src/spatial_index/sweep1d.zig`)
-    - [ ] Port GJK & EPA Algorithms (`src/collision/collision.zig`)
-    - [ ] Implement Primitive Collision Tests
-    - [ ] Implement `cpCollide` Dispatch
-    - [ ] Port Arbiters (`src/collision/arbiter.zig` & contact persistence)
+    - [ ] Port GJK & EPA Algorithms (`src/collision/collision.zig`) — still pending; current narrow-phase uses SAT/closest-point helpers only
+    - [x] Implement Primitive Collision Tests
+    - [x] Implement `cpCollide` Dispatch
+    - [x] Port Arbiters (`src/collision/arbiter.zig` & contact persistence)
 
 - [ ] **Phase 4: Constraints & Joints**
     - [ ] Implement Simple Joints (`Pin`, `Slide`, `Pivot`)
