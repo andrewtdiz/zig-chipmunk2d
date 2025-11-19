@@ -21,8 +21,8 @@ pub const cpBBTree = struct {
         self.index.remove(object);
     }
 
-    pub fn reindex(self: *cpBBTree) void {
-        self.index.reindex();
+    pub fn reindex(self: *cpBBTree) !void {
+        try self.index.reindex();
     }
 
     pub fn query(self: cpBBTree, bounds: bb.cpBB, func: *const spatial_interface.QueryFunc, data: ?*anyopaque) void {
@@ -31,6 +31,10 @@ pub const cpBBTree = struct {
 
     pub fn count(self: cpBBTree) usize {
         return self.index.count();
+    }
+
+    pub fn each(self: *cpBBTree, func: *const spatial_interface.EachFunc, data: ?*anyopaque) void {
+        self.index.each(func, data);
     }
 };
 
@@ -50,7 +54,7 @@ pub fn testBBTreeDelegatesToIndex() !void {
     try std.testing.expectEqual(@as(usize, 2), tree.count());
 
     bounds[0] = bb.cpBBNew(4.0, 4.0, 5.0, 5.0);
-    tree.reindex();
+    try tree.reindex();
 
     var matches = std.ArrayList(bb.cpBB).init(allocator);
     defer matches.deinit();
