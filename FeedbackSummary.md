@@ -17,11 +17,11 @@ This document consolidates the findings across `Feedback/Feedback_1.md` through 
 - Polygon collisions allocate temporary arenas from `std.heap.page_allocator` instead of reusing the space allocator. The planned layered allocator strategy (`util/pool.zig`, contact rings) never materialized.
 
 ## 4. Advanced Modules & Testing
-- `cpHastySpace` merely calls the serial `cpSpace.step` and leaves the multithreaded solver unimplemented.
+- `cpHastySpace` now includes worker-thread scheduling for the constraint and arbiter phases, but it still needs feature parity validation against the C implementation.
 - The test strategy (cross-checking via `@cImport`, fuzz/property tests, determinism checks) has not been executed; existing tests are limited to small `std.testing` units, so behavior parity with Chipmunk 7.0.3 remains unverified.
 
 ## 5. Unfinished Milestones
-- Several deliverables marked complete in `TaskList.md` do not exist in the tree: there are no `space_step.zig`, `space_query.zig`, `space_hash.zig`, or `sweep1d.zig` modules, and spatial indices are unused in `cpSpace`.
+- Several deliverables marked complete in `TaskList.md` still diverge from the migration plan: `space_step.zig` and `space_query.zig` remain absent and spatial indices are unused in `cpSpace`.
 - Many of the above gaps (collision, sleeping, spatial indices, allocator pools, multithreaded stepping) are explicitly listed as remaining work in the TaskList/Migration plan, so they need to be implemented before claiming migration parity.
 
 Addressing these items will align the Zig port with the documented Chipmunk2D behavior, restore the expected performance characteristics, and satisfy the migration plan’s requirements.
