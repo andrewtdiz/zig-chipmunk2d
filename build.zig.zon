@@ -1,17 +1,7 @@
 .{
     .name = .zig_chipmunk2d,
     .version = "0.0.0",
-    .fingerprint = 0x9422bd442c824a9e,
     .minimum_zig_version = "0.15.2",
-    .dependencies = .{
-        .zmath = .{
-            .url = "git+https://github.com/andrewtdiz/zig-math",
-            .hash = "zmath-0.11.0-dev-wjwivURgAwCWtNLpwzMhCCkrq-vgWnrKreZgqXeRNjPb",
-        },
-    },
-    .paths = .{
-        "build.zig",
-        "build.zig.zon",
-        "src",
-    },
+    .paths = .{ "", "src", "build.zig" },
+    .fingerprint = 0x9422bd442c824a9e,
 }

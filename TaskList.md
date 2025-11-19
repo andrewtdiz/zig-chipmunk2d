@@ -10,11 +10,11 @@ This document outlines the strategy for migrating the Chipmunk2D physics engine 
     - [ ] Set up demo/benchmark executable
     - [ ] Define memory management strategy (Allocator interface)
 
-- [ ] **Phase 1: Foundation (Math & Core Types)**
-    - [ ] Port Configuration and Core Types (`src/core/types.zig`: `cpFloat`, `cpBool`, collision types, IDs, bitmasks)
-    - [ ] Port Vector Math (`src/core/vect.zig`: `cpVect` operations)
-    - [ ] Port Bounding Boxes (`src/core/bb.zig`: `cpBB` operations)
-    - [ ] Port Transforms (`src/core/transform.zig`: `cpTransform`, any matrix helpers)
+- [x] **Phase 1: Foundation (Math & Core Types)**
+    - [x] Port Configuration and Core Types (`src/core/types.zig`: `cpFloat`, `cpBool`, collision types, IDs, bitmasks)
+    - [x] Port Vector Math (`src/core/vect.zig`: `cpVect` operations)
+    - [x] Port Bounding Boxes (`src/core/bb.zig`: `cpBB` operations)
+    - [x] Port Transforms (`src/core/transform.zig`: `cpTransform`, any matrix helpers)
 
 - [ ] **Phase 2: Physics Primitives**
     - [ ] Port Rigid Bodies (`src/space/body.zig`: `cpBody` struct & logic)
