@@ -32,10 +32,10 @@ This document captures the open work items identified across the combined migrat
     - [ ] Parallelize broad-phase collision generation inside `cpHastySpace` so collision detection scales with worker threads.
     - [ ] Cache and reuse arbiter/contact data between iterations to avoid recomputing manifolds every frame.
 
-- [ ] **Verification & Testing**
-    - [ ] Build the cross-implementation harness that runs Zig simulations alongside Chipmunk 7.0.3 for behavioral parity checks.
-    - [ ] Add fuzz/property-based tests and long-running determinism loops to prove stability across seeds and time horizons.
-    - [ ] Validate `cpHastySpace` performance and feature parity against the C implementation and document the results.
+- [x] **Verification & Testing**
+    - [x] Build the cross-implementation harness that runs Zig simulations alongside Chipmunk 7.0.3 for behavioral parity checks.
+    - [x] Add fuzz/property-based tests and long-running determinism loops to prove stability across seeds and time horizons.
+    - [x] Validate `cpHastySpace` performance and feature parity against the C implementation and document the results.
 
 ---
 
