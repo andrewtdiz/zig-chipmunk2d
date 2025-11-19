@@ -514,6 +514,41 @@ pub fn testSpaceQueries() !void {
     try std.testing.expectEqual(@as(usize, 1), hits);
 }
 
+test "space integration applies gravity" {
+    try testSpaceIntegration();
+}
+
+test "space resolves circle collisions" {
+    try testSpaceCollisionResolution();
+}
+
+test "space enforces constraint distances" {
+    try testSpaceConstraintPipeline();
+}
+
+test "space queries find overlapping shapes" {
+    try testSpaceQueries();
+}
+
+test "space executes post-step callbacks" {
+    var space = cpSpace.init(std.testing.allocator);
+    defer space.deinit();
+
+    var called = false;
+    const Callback = struct {
+        fn run(_: *cpSpace, data: *anyopaque) void {
+            const flag = @as(*bool, @ptrCast(data));
+            flag.* = true;
+        }
+    };
+
+    try space.addPostStep(null, Callback.run, &called);
+    space.step(0.0);
+
+    try std.testing.expect(called);
+    try std.testing.expectEqual(@as(usize, 0), space.post_steps.items.len);
+}
+
 comptime {
     std.testing.refAllDecls(@This());
 }

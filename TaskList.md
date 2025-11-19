@@ -4,11 +4,11 @@ This document outlines the strategy for migrating the Chipmunk2D physics engine 
 
 ## Task Checklist
 
-- [ ] **Project Setup & Infrastructure**
-    - [ ] Initialize Zig project (`zig init-lib`) (already done for this repo; kept here for reference)
-    - [ ] Configure `build.zig`
-    - [ ] Set up demo/benchmark executable
-    - [ ] Define memory management strategy (Allocator interface)
+- [x] **Project Setup & Infrastructure**
+    - [x] Initialize Zig project (`zig init-lib`) (already done for this repo; kept here for reference)
+    - [x] Configure `build.zig`
+    - [x] Set up demo/benchmark executable
+    - [x] Define memory management strategy (Allocator interface)
 
 - [x] **Phase 1: Foundation (Math & Core Types)**
     - [x] Port Configuration and Core Types (`src/core/types.zig`: `cpFloat`, `cpBool`, collision types, IDs, bitmasks)
@@ -53,10 +53,10 @@ This document outlines the strategy for migrating the Chipmunk2D physics engine 
     - [x] Port Robust Geometry Helpers (`src/extras/robust.zig`: `cpRobust`)
     - [x] Port Debug Rendering Helpers (`src/extras/space_debug.zig`: `cpSpaceDebug`)
 
-- [ ] **Verification & Testing**
-    - [ ] Write Unit Tests for Math/Geometry
-    - [ ] Create Integration Tests/Demos
-    - [ ] (Optional) Visual Debugging Setup
+- [x] **Verification & Testing**
+    - [x] Write Unit Tests for Math/Geometry
+    - [x] Create Integration Tests/Demos
+    - [x] (Optional) Visual Debugging Setup
 
 ---
 
