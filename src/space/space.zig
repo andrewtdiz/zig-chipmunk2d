@@ -15,9 +15,9 @@ const spatial_interface = @import("../spatial_index/interface.zig");
 const bbtree = @import("../spatial_index/bbtree.zig");
 const space_hash_mod = @import("../spatial_index/space_hash.zig");
 const sweep_mod = @import("../spatial_index/sweep1d.zig");
+const step_module = @import("space_step.zig");
 const query_module = @import("space_query.zig");
 const pool = @import("../util/pool.zig");
-const step_module = @import("space_step.zig");
 
 const ShapePair = struct { a: usize, b: usize };
 
