@@ -333,7 +333,6 @@ fn rebuildIndex(
     index.deinit();
     index.* = replacement;
 }
-
 const Stepper = step_module.makeStepper(cpSpace, struct {
     pub fn cacheShape(shape: *shape_base.cpShape) void {
         cacheShapeInternal(shape);
@@ -390,11 +389,7 @@ pub fn integratePositions(space: *cpSpace, dt: types.cpFloat) void {
 
 pub fn updateShapeCaches(space: *cpSpace) void {
     for (space.shapes.items) |shape| {
-        switch (shape.shape_type) {
-            .circle => asCircle(shape).cacheBB(),
-            .segment => asSegment(shape).cacheBB(),
-            .poly => asPoly(shape).cacheBB(),
-        }
+        cacheShapeInternal(shape);
     }
 }
 
