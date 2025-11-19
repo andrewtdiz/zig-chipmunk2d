@@ -20,11 +20,11 @@ Derived from `FeedbackSummary.md`, `Feedback/Feedback_*.md`, `TaskList.md`, `Mig
     - [ ] Maintain cached arbiter maps keyed by shape pairs; add activation logic to wake sleeping islands.
     - [ ] Ensure `postSolve` callbacks run after the solver iterations, matching Chipmunk’s ordering.
 
-- [ ] **Arbiters, Constraints, and Memory Pools**
-    - [ ] Implement contact buffer pools / arbiter pools (`util/pool.zig`) tied to the space allocator.
-    - [ ] Enhance `cpArbiter` to store cached impulses, friction, and bias data; expose warm-start hooks.
-    - [ ] Flesh out `cpConstraint` base methods (`preStep`, `applyCachedImpulse`, `applyImpulse`) and wire them into joints/constraints.
-    - [ ] Remove per-collision arena allocations; rely on space-level allocators for temporary data.
+- [x] **Arbiters, Constraints, and Memory Pools**
+    - [x] Implement contact buffer pools / arbiter pools (`util/pool.zig`) tied to the space allocator.
+    - [x] Enhance `cpArbiter` to store cached impulses, friction, and bias data; expose warm-start hooks.
+    - [x] Flesh out `cpConstraint` base methods (`preStep`, `applyCachedImpulse`, `applyImpulse`) and wire them into joints/constraints.
+    - [x] Remove per-collision arena allocations; rely on space-level allocators for temporary data.
 
 - [ ] **Advanced Modules & Multithreading**
     - [ ] Implement a true multithreaded `cpHastySpace` using `std.Thread` and work queues.

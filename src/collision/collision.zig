@@ -7,6 +7,8 @@ const segment = @import("../shape/segment.zig");
 const poly = @import("../shape/poly.zig");
 const shape_base = @import("../shape/shape_base.zig");
 
+pub const max_contacts = 2;
+
 pub const Contact = struct {
     point: vect.cpVect,
     normal: vect.cpVect,
@@ -14,11 +16,11 @@ pub const Contact = struct {
 };
 
 pub const CollisionResult = struct {
-    contacts: std.BoundedArray(Contact, 2),
+    contacts: std.BoundedArray(Contact, max_contacts),
     normal: vect.cpVect,
 
     pub fn empty() CollisionResult {
-        return .{ .contacts = std.BoundedArray(Contact, 2).init(0) catch unreachable, .normal = vect.cpvzero };
+        return .{ .contacts = std.BoundedArray(Contact, max_contacts).init(0) catch unreachable, .normal = vect.cpvzero };
     }
 
     pub fn addContact(self: *CollisionResult, contact: Contact) void {
@@ -132,13 +134,10 @@ fn polygonAxisPenetration(center: vect.cpVect, vertices: []const vect.cpVect, ra
     return .{ .separated = false, .distance = best_distance, .normal = best_normal };
 }
 
-pub fn circleToPoly(a: *const circle.cpCircleShape, b: *const poly.cpPolyShape) CollisionResult {
+pub fn circleToPoly(allocator: std.mem.Allocator, a: *const circle.cpCircleShape, b: *const poly.cpPolyShape) CollisionResult {
     var result = CollisionResult.empty();
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-
     const center = vect.cpvadd(a.base.body.p, vect.cpvrotate(a.offset, a.base.body.rotationVector()));
-    const verts = transformPolyVertices(arena.allocator(), b) catch return result;
+    const verts = transformPolyVertices(allocator, b) catch return result;
 
     const projection = polygonAxisPenetration(center, verts, a.radius + b.radius);
     if (projection.separated) return result;
@@ -198,13 +197,11 @@ fn polyCentroid(vertices: []const vect.cpVect) vect.cpVect {
     return vect.cpvmult(center, 1.0 / @as(types.cpFloat, @floatFromInt(vertices.len)));
 }
 
-pub fn polyToPoly(a: *const poly.cpPolyShape, b: *const poly.cpPolyShape) CollisionResult {
+pub fn polyToPoly(allocator: std.mem.Allocator, a: *const poly.cpPolyShape, b: *const poly.cpPolyShape) CollisionResult {
     var result = CollisionResult.empty();
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
 
-    const verts_a = transformPolyVertices(arena.allocator(), a) catch return result;
-    const verts_b = transformPolyVertices(arena.allocator(), b) catch return result;
+    const verts_a = transformPolyVertices(allocator, a) catch return result;
+    const verts_b = transformPolyVertices(allocator, b) catch return result;
 
     const axis_a = findAxisLeastPenetration(verts_a, verts_b) orelse return result;
     const axis_b = findAxisLeastPenetration(verts_b, verts_a) orelse return result;
@@ -230,22 +227,22 @@ pub fn bbOverlap(a: *const shape_base.cpShape, b: *const shape_base.cpShape) Col
     return result;
 }
 
-pub fn collide(a: *const shape_base.cpShape, b: *const shape_base.cpShape) CollisionResult {
+pub fn collide(allocator: std.mem.Allocator, a: *const shape_base.cpShape, b: *const shape_base.cpShape) CollisionResult {
     return switch (a.shape_type) {
         .circle => switch (b.shape_type) {
             .circle => circleToCircle(@ptrCast(a), @ptrCast(b)),
             .segment => circleToSegment(@ptrCast(a), @ptrCast(b)),
-            .poly => circleToPoly(@ptrCast(a), @ptrCast(b)),
+            .poly => circleToPoly(allocator, @ptrCast(a), @ptrCast(b)),
         },
         .segment => switch (b.shape_type) {
             .circle => circleToSegment(@ptrCast(b), @ptrCast(a)),
             .segment => bbOverlap(a, b),
-            .poly => circleToPoly(@ptrCast(b), @ptrCast(a)),
+            .poly => circleToPoly(allocator, @ptrCast(b), @ptrCast(a)),
         },
         .poly => switch (b.shape_type) {
-            .circle => circleToPoly(@ptrCast(b), @ptrCast(a)),
-            .segment => circleToPoly(@ptrCast(a), @ptrCast(b)),
-            .poly => polyToPoly(@ptrCast(a), @ptrCast(b)),
+            .circle => circleToPoly(allocator, @ptrCast(b), @ptrCast(a)),
+            .segment => circleToPoly(allocator, @ptrCast(a), @ptrCast(b)),
+            .poly => polyToPoly(allocator, @ptrCast(a), @ptrCast(b)),
         },
     };
 }
@@ -277,7 +274,7 @@ pub fn testBBoxFallback() !void {
     var poly_a = poly.cpPolyShape.init(&body_a, &verts, 0.0);
     var poly_b = poly.cpPolyShape.init(&body_b, &verts, 0.0);
 
-    const result = collide(&poly_a.base, &poly_b.base);
+    const result = collide(std.testing.allocator, &poly_a.base, &poly_b.base);
     try std.testing.expect(result.contactCount() == 1);
 }
 
@@ -291,7 +288,7 @@ pub fn testCircleSegmentCollision() !void {
     var circle_a = circle.cpCircleShape.init(&body_a, 0.5, vect.cpvzero);
     var segment_b = segment.cpSegmentShape.init(&body_b, vect.cpv(-1.0, 0.0), vect.cpv(1.0, 0.0), 0.1);
 
-    const contact = collide(&circle_a.base, &segment_b.base);
+    const contact = collide(std.testing.allocator, &circle_a.base, &segment_b.base);
     try std.testing.expect(contact.contactCount() == 1);
     try std.testing.expect(contact.contacts.constSlice()[0].distance < 0.0);
 }
@@ -307,7 +304,7 @@ pub fn testPolyPolyCollision() !void {
     var poly_a = poly.cpPolyShape.init(&body_a, &verts, 0.0);
     var poly_b = poly.cpPolyShape.init(&body_b, &verts, 0.0);
 
-    const result = collide(&poly_a.base, &poly_b.base);
+    const result = collide(std.testing.allocator, &poly_a.base, &poly_b.base);
     try std.testing.expect(result.contactCount() == 1);
     try std.testing.expect(result.contacts.constSlice()[0].distance < 0.0);
 }
