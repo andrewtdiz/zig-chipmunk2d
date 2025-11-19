@@ -33,25 +33,25 @@ This document outlines the strategy for migrating the Chipmunk2D physics engine 
     - [x] Implement `cpCollide` Dispatch
     - [x] Port Arbiters (`src/collision/arbiter.zig` & contact persistence)
 
-- [ ] **Phase 4: Constraints & Joints**
-    - [ ] Implement Simple Joints (`Pin`, `Slide`, `Pivot`)
-    - [ ] Implement Complex Joints (`Groove`, `DampedSpring`, `RotarySpring`)
-    - [ ] Implement Motors (`SimpleMotor`, `Gear`, `Ratchet`, `RotaryLimit`)
+- [x] **Phase 4: Constraints & Joints**
+    - [x] Implement Simple Joints (`Pin`, `Slide`, `Pivot`)
+    - [x] Implement Complex Joints (`Groove`, `DampedSpring`, `RotarySpring`)
+    - [x] Implement Motors (`SimpleMotor`, `Gear`, `Ratchet`, `RotaryLimit`)
 
-- [ ] **Phase 5: The Space (Simulation Core)**
-    - [ ] Port `cpSpace` Struct (`src/space/space.zig`)
-    - [ ] Implement Object Management (`add`/`remove`)
-    - [ ] Implement Simulation Loop (`cpSpaceStep`/`step` in `src/space/space_step.zig`)
-    - [ ] Port Impulse Solver
-    - [ ] Implement Collision Handlers/Callbacks
-    - [ ] Port Spatial Queries (`point`, `segment`, `bb`, `shape` in `src/space/space_query.zig`)
+- [x] **Phase 5: The Space (Simulation Core)**
+    - [x] Port `cpSpace` Struct (`src/space/space.zig`)
+    - [x] Implement Object Management (`add`/`remove`)
+    - [x] Implement Simulation Loop (`cpSpaceStep`/`step` in `src/space/space_step.zig`)
+    - [x] Port Impulse Solver
+    - [x] Implement Collision Handlers/Callbacks
+    - [x] Port Spatial Queries (`point`, `segment`, `bb`, `shape` in `src/space/space_query.zig`)
 
 - [ ] **Phase 6: Extras & Advanced Modules**
-    - [ ] Port Multithreaded Space (`src/extras/hasty_space.zig`: `cpHastySpace`)
-    - [ ] Port Marching Squares (`src/extras/march.zig`: `cpMarch`)
-    - [ ] Port Polyline Utilities (`src/extras/polyline.zig`: `cpPolyline`)
-    - [ ] Port Robust Geometry Helpers (`src/extras/robust.zig`: `cpRobust`)
-    - [ ] Port Debug Rendering Helpers (`src/extras/space_debug.zig`: `cpSpaceDebug`)
+    - [x] Port Multithreaded Space (`src/extras/hasty_space.zig`: `cpHastySpace`)
+    - [x] Port Marching Squares (`src/extras/march.zig`: `cpMarch`)
+    - [x] Port Polyline Utilities (`src/extras/polyline.zig`: `cpPolyline`)
+    - [x] Port Robust Geometry Helpers (`src/extras/robust.zig`: `cpRobust`)
+    - [x] Port Debug Rendering Helpers (`src/extras/space_debug.zig`: `cpSpaceDebug`)
 
 - [ ] **Verification & Testing**
     - [ ] Write Unit Tests for Math/Geometry

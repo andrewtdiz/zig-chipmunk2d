@@ -6,6 +6,7 @@ pub const shape = @import("./zig_chipmunk2d/shape.zig");
 pub const constraint = @import("./zig_chipmunk2d/constraint.zig");
 pub const spatial_index = @import("./zig_chipmunk2d/spatial_index.zig");
 pub const collision = @import("./zig_chipmunk2d/collision.zig");
+pub const extras = @import("./zig_chipmunk2d/extras.zig");
 const types = core.types;
 const vect = core.vect;
 const bb = core.bb;
