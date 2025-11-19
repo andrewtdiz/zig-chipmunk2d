@@ -15,7 +15,8 @@ ObjectiveChipmunk-iOS
 generated_docs
 
 .zig-cache
-zig-out
+zig-out/**
+.zig-cache/**
 
 CMakeCache.txt
 CMakeFiles
