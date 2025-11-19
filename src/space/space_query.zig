@@ -34,7 +34,7 @@ pub fn makeQueryApi(comptime Space: type) type {
 
         pub fn shapeQuery(space_const: *const Space, target: *shape_base.cpShape, func: fn (*shape_base.cpShape, collision.CollisionResult) void) void {
             var space = @constCast(space_const);
-            var ctx = ShapeContext{ .space = space, .target = target, .func = func };
+            var ctx = ShapeContext{ .target = target, .func = func, .cache = &space.collision_cache };
             const bounds = target.bbValue();
             space.dynamic_index.query(bounds, shapeCallback, &ctx);
             space.static_index.query(bounds, shapeCallback, &ctx);
@@ -60,9 +60,9 @@ pub fn makeQueryApi(comptime Space: type) type {
         };
 
         const ShapeContext = struct {
-            space: *Space,
             target: *shape_base.cpShape,
             func: fn (*shape_base.cpShape, collision.CollisionResult) void,
+            cache: *collision.CollisionIdCache,
         };
 
         fn pointCallback(object: *const anyopaque, _: bb.cpBB, ctx_ptr: ?*anyopaque) void {
@@ -97,7 +97,7 @@ pub fn makeQueryApi(comptime Space: type) type {
             const ctx = @as(*ShapeContext, @ptrCast(ctx_ptr.?));
             const shape = @as(*shape_base.cpShape, @ptrCast(object));
             if (shape == ctx.target) return;
-            const result = collision.collide(&ctx.space.collision_cache, ctx.target, shape);
+            const result = collision.collide(ctx.cache, ctx.target, shape);
             if (result.contactCount() > 0) {
                 ctx.func(shape, result);
             }

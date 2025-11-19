@@ -15,6 +15,7 @@ fn midlerp(x0: types.cpFloat, x1: types.cpFloat, s0: types.cpFloat, s1: types.cp
 }
 
 fn marchCells(
+    allocator: std.mem.Allocator,
     bounds: bb.cpBB,
     x_samples: usize,
     y_samples: usize,
@@ -30,7 +31,7 @@ fn marchCells(
     const x_denom: types.cpFloat = 1.0 / @as(types.cpFloat, @floatFromInt(x_samples - 1));
     const y_denom: types.cpFloat = 1.0 / @as(types.cpFloat, @floatFromInt(y_samples - 1));
 
-    var buffer = std.ArrayList(types.cpFloat).init(std.heap.page_allocator);
+    var buffer = std.ArrayList(types.cpFloat).init(allocator);
     defer buffer.deinit();
     buffer.ensureTotalCapacity(x_samples) catch {};
 
@@ -152,6 +153,7 @@ fn cellHard(
 }
 
 pub fn cpMarchSoft(
+    allocator: std.mem.Allocator,
     bounds: bb.cpBB,
     x_samples: usize,
     y_samples: usize,
@@ -161,10 +163,11 @@ pub fn cpMarchSoft(
     sample: cpMarchSampleFunc,
     sample_data: ?*anyopaque,
 ) void {
-    marchCells(bounds, x_samples, y_samples, t, segment, segment_data, sample, sample_data, cellSoft);
+    marchCells(allocator, bounds, x_samples, y_samples, t, segment, segment_data, sample, sample_data, cellSoft);
 }
 
 pub fn cpMarchHard(
+    allocator: std.mem.Allocator,
     bounds: bb.cpBB,
     x_samples: usize,
     y_samples: usize,
@@ -174,7 +177,7 @@ pub fn cpMarchHard(
     sample: cpMarchSampleFunc,
     sample_data: ?*anyopaque,
 ) void {
-    marchCells(bounds, x_samples, y_samples, t, segment, segment_data, sample, sample_data, cellHard);
+    marchCells(allocator, bounds, x_samples, y_samples, t, segment, segment_data, sample, sample_data, cellHard);
 }
 
 test "march soft generates contour segments" {
@@ -195,7 +198,7 @@ test "march soft generates contour segments" {
     }.call;
 
     const bounds = bb.cpBBNew(-1.0, -1.0, 1.0, 1.0);
-    cpMarchSoft(bounds, 4, 4, 0.0, collect, segments, sample, null);
+    cpMarchSoft(std.testing.allocator, bounds, 4, 4, 0.0, collect, segments, sample, null);
 
     try std.testing.expect(segments.items.len > 0);
 }

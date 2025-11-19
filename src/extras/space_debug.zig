@@ -45,6 +45,7 @@ pub const cpSpaceDebugDrawOptions = struct {
     drawDot: fn (types.cpFloat, vect.cpVect, cpSpaceDebugColor, ?*anyopaque) void,
     colorForShape: fn (*shape_base.cpShape, ?*anyopaque) cpSpaceDebugColor,
     data: ?*anyopaque = null,
+    allocator: std.mem.Allocator,
     flags: cpSpaceDebugFlags = .{},
     shapeOutlineColor: cpSpaceDebugColor = cpSpaceDebugColor.gray(),
     constraintColor: cpSpaceDebugColor = cpSpaceDebugColor.gray(),
@@ -71,7 +72,7 @@ fn drawShape(shape: *shape_base.cpShape, options: cpSpaceDebugDrawOptions) void 
         },
         .poly => {
             const p = @as(*poly.cpPolyShape, @ptrCast(shape));
-            var transformed = std.ArrayList(vect.cpVect).init(std.heap.page_allocator);
+            var transformed = std.ArrayList(vect.cpVect).init(options.allocator);
             defer transformed.deinit();
             transformed.ensureTotalCapacity(p.vertices.len) catch {};
             const rot = body.rotationVector();
@@ -186,6 +187,7 @@ test "space debug draw triggers callbacks" {
                 return cpSpaceDebugColor.white();
             }
         }.call,
+        .allocator = std.testing.allocator,
         .data = &counts,
     };
 

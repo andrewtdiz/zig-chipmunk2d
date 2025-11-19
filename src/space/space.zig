@@ -143,6 +143,52 @@ pub const ManagedIndex = struct {
     }
 };
 
+const ConstraintRuntimeStorage = struct {
+    allocator: std.mem.Allocator,
+    slots: std.AutoHashMapUnmanaged(*constraint_base.cpConstraint, Slot) = .{},
+
+    const Slot = struct { buffer: []u8 };
+
+    pub fn init(allocator: std.mem.Allocator) ConstraintRuntimeStorage {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *ConstraintRuntimeStorage) void {
+        var it = self.slots.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.value_ptr.buffer);
+        }
+        self.slots.deinit(self.allocator);
+    }
+
+    pub fn ensure(self: *ConstraintRuntimeStorage, constraint: *constraint_base.cpConstraint, size: usize) ![]u8 {
+        if (self.slots.getPtr(constraint)) |slot| {
+            if (slot.buffer.len < size) {
+                self.allocator.free(slot.buffer);
+                slot.buffer = try self.allocator.alloc(u8, size);
+            }
+            return slot.buffer;
+        }
+
+        const buffer = try self.allocator.alloc(u8, size);
+        try self.slots.put(self.allocator, constraint, .{ .buffer = buffer });
+        return buffer;
+    }
+
+    pub fn get(self: *ConstraintRuntimeStorage, constraint: *constraint_base.cpConstraint) ?[]u8 {
+        if (self.slots.getPtr(constraint)) |slot| {
+            return slot.buffer;
+        }
+        return null;
+    }
+
+    pub fn release(self: *ConstraintRuntimeStorage, constraint: *constraint_base.cpConstraint) void {
+        if (self.slots.remove(constraint)) |slot| {
+            self.allocator.free(slot.buffer);
+        }
+    }
+};
+
 fn shapeBounds(ptr: *const anyopaque, _: ?*const anyopaque) bb.cpBB {
     const shape = @as(*const shape_base.cpShape, @ptrCast(ptr));
     return shape.bbValue();
@@ -161,8 +207,9 @@ pub const cpSpace = struct {
     constraints: std.ArrayList(ConstraintEntry),
     arbiters: std.ArrayList(arbiter.cpArbiter),
     post_steps: std.ArrayList(PostStepCallback),
+    collision_cache: collision.CollisionIdCache,
+    constraint_runtime: ConstraintRuntimeStorage,
     handler: CollisionHandler = .{},
-    collision_cache: collision.CollisionCache,
     dynamic_index: ManagedIndex,
     static_index: ManagedIndex,
 
@@ -176,13 +223,16 @@ pub const cpSpace = struct {
             .constraints = std.ArrayList(ConstraintEntry).init(allocator),
             .arbiters = std.ArrayList(arbiter.cpArbiter).init(allocator),
             .post_steps = std.ArrayList(PostStepCallback).init(allocator),
-            .collision_cache = collision.CollisionCache.init(allocator),
+            .collision_cache = collision.CollisionIdCache.init(allocator),
+            .constraint_runtime = ConstraintRuntimeStorage.init(allocator),
             .dynamic_index = ManagedIndex.init(allocator, .bb_tree, shapeBounds, null, null),
             .static_index = ManagedIndex.init(allocator, .bb_tree, shapeBounds, null, null),
         };
     }
 
     pub fn deinit(self: *cpSpace) void {
+        self.constraint_runtime.deinit();
+        self.collision_cache.deinit();
         self.bodies.deinit();
         self.shapes.deinit();
         self.dynamic_shapes.deinit();
@@ -190,7 +240,6 @@ pub const cpSpace = struct {
         self.constraints.deinit();
         self.arbiters.deinit();
         self.post_steps.deinit();
-        self.collision_cache.deinit();
         self.dynamic_index.deinit();
         self.static_index.deinit();
     }
@@ -245,9 +294,18 @@ pub const cpSpace = struct {
         while (i < self.constraints.items.len) : (i += 1) {
             if (self.constraints.items[i].constraint == constraint) {
                 _ = self.constraints.orderedRemove(i);
+                self.constraint_runtime.release(constraint);
                 break;
             }
         }
+    }
+
+    pub fn ensureConstraintStorage(self: *cpSpace, constraint: *constraint_base.cpConstraint, size: usize) ![]u8 {
+        return self.constraint_runtime.ensure(constraint, size);
+    }
+
+    pub fn constraintStorage(self: *cpSpace, constraint: *constraint_base.cpConstraint) ?[]u8 {
+        return self.constraint_runtime.get(constraint);
     }
 
     pub fn addPostStep(self: *cpSpace, key: ?*const anyopaque, func: fn (*cpSpace, *anyopaque) void, data: *anyopaque) !void {
