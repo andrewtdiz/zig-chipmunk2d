@@ -10,11 +10,11 @@ This document captures the open work items identified across the combined migrat
     - [x] Move polygon scratch allocations off `std.heap.page_allocator` and into the layered allocator strategy owned by each `cpSpace`.
     - [x] Reorder `postSolve` so callbacks execute after solver iterations with access to final impulses.
 
-- [ ] **Spatial Indexing & cpSpace Lifecycle**
-    - [ ] Finish porting `cpSpaceHash`, `cpSweep1D`, `space_step.zig`, and `space_query.zig` so the broad phase no longer double-loops over every shape pair and segment queries are exposed.
-    - [ ] Extend `cpSpace` with stamps, sleeping components, cached arbiter maps, wildcard handler tables, and activation/wake-up paths per Chipmunk’s pipeline.
-    - [ ] Split dynamic/static body partitions and maintain stamp counters so sleeping metadata can cull inactive islands.
-    - [ ] Wire spatial indices into `cpSpace.step`/`cpHastySpace` so cached broad-phase data drives collision pair generation.
+- [x] **Spatial Indexing & cpSpace Lifecycle**
+    - [x] Finish porting `cpSpaceHash`, `cpSweep1D`, `space_step.zig`, and `space_query.zig` so the broad phase no longer double-loops over every shape pair and segment queries are exposed.
+    - [x] Extend `cpSpace` with stamps, sleeping components, cached arbiter maps, wildcard handler tables, and activation/wake-up paths per Chipmunk’s pipeline.
+    - [x] Split dynamic/static body partitions and maintain stamp counters so sleeping metadata can cull inactive islands.
+    - [x] Wire spatial indices into `cpSpace.step`/`cpHastySpace` so cached broad-phase data drives collision pair generation.
 
 - [ ] **Constraint Solver & Arbiters**
     - [ ] Implement real `preStep`, `applyCachedImpulse`, and `applyImpulse` phases that compute effective mass, bias, warm-start impulses, and iterative solver updates for every constraint.

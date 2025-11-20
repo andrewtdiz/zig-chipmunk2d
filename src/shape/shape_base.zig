@@ -32,6 +32,7 @@ pub const cpShape = struct {
     elasticity: types.cpFloat = 0.0,
     friction: types.cpFloat = 0.7,
     surface_velocity: vect.cpVect = vect.cpvzero,
+    collision_type: types.cpCollisionType = 0,
     filter: cpShapeFilter = cpShapeFilter.all(),
     user_data: types.cpDataPointer = null,
 

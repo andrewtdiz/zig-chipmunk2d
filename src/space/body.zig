@@ -18,6 +18,8 @@ pub const cpBody = struct {
     t: types.cpFloat = 0.0,
     v_bias: vect.cpVect = vect.cpvzero,
     w_bias: types.cpFloat = 0.0,
+    sleeping: bool = false,
+    idle_stamp: u64 = 0,
     user_data: types.cpDataPointer = null,
 
     pub fn init(mass: types.cpFloat, moment: types.cpFloat) cpBody {

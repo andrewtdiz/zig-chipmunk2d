@@ -1,3 +1,4 @@
+const std = @import("std");
 const types = @import("../core/types.zig");
 const vect = @import("../core/vect.zig");
 const bb = @import("../core/bb.zig");
@@ -7,7 +8,10 @@ const arbiter = @import("../collision/arbiter.zig");
 
 pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
     return struct {
+        const Handler = @TypeOf(@as(*Space, undefined).handler);
+
         pub fn step(space: *Space, dt: types.cpFloat) void {
+            space.stamp +%= 1;
             const dt_coef: types.cpFloat = if (dt != 0.0) dt else 1.0;
             updateVelocities(space, dt);
             runConstraintCallback(space, dt, dt_coef, .preStep);
@@ -24,8 +28,10 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
 
             runPostSolve(space);
             integratePositions(space, dt);
+            updateSleepStates(space);
             runConstraintCallback(space, dt, dt_coef, .postStep);
             runPostSteps(space);
+            pruneArbiterCache(space);
         }
 
         const Callback = enum { preStep, applyCachedImpulse, applyImpulse, postStep };
@@ -43,12 +49,14 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
 
         fn updateVelocities(space: *Space, dt: types.cpFloat) void {
             for (space.bodies.items) |body| {
+                if (body.sleeping) continue;
                 body.updateVelocity(space.gravity, space.damping, dt);
             }
         }
 
         fn integratePositions(space: *Space, dt: types.cpFloat) void {
             for (space.bodies.items) |body| {
+                if (body.sleeping) continue;
                 body.updatePosition(dt);
             }
         }
@@ -76,24 +84,43 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
             if (!ctx.static_query) {
                 if (@intFromPtr(other) <= @intFromPtr(ctx.primary)) return;
             }
+            if (ctx.primary.body.sleeping and other.body.sleeping) return;
             if (shape_base.cpShapeFilter.reject(ctx.primary.filter, other.filter)) return;
+            const handler = selectHandler(ctx.space, ctx.primary, other);
             const result = collision.collide(&ctx.space.collision_cache, ctx.primary, other);
             if (result.contactCount() == 0) return;
 
-            var new_arb = arbiter.cpArbiter.init(ctx.primary, other);
-            new_arb.collision_id = result.id;
+            activatePair(ctx.space, ctx.primary, other);
+
+            const arb_ptr = fetchArbiter(ctx.space, ctx.primary, other) orelse {
+                var fallback = arbiter.cpArbiter.init(ctx.primary, other);
+                fallback.collision_id = result.id;
+                for (result.contacts.constSlice()) |contact| {
+                    fallback.addContact(contact);
+                }
+                if (handler.begin) |begin_func| {
+                    if (!begin_func(&fallback, ctx.space)) return;
+                }
+                if (handler.preSolve) |pre_func| {
+                    if (!pre_func(&fallback, ctx.space)) return;
+                }
+                ctx.space.arbiters.append(fallback) catch return;
+                return;
+            };
+
+            arb_ptr.collision_id = result.id;
             for (result.contacts.constSlice()) |contact| {
-                new_arb.addContact(contact);
+                arb_ptr.addContact(contact);
             }
 
-            if (ctx.space.handler.begin) |begin_func| {
-                if (!begin_func(&new_arb, ctx.space)) return;
+            if (handler.begin) |begin_func| {
+                if (!begin_func(arb_ptr, ctx.space)) return;
             }
-            if (ctx.space.handler.preSolve) |pre_func| {
-                if (!pre_func(&new_arb, ctx.space)) return;
+            if (handler.preSolve) |pre_func| {
+                if (!pre_func(arb_ptr, ctx.space)) return;
             }
 
-            ctx.space.arbiters.append(new_arb) catch return;
+            ctx.space.arbiters.append(arb_ptr.*) catch return;
         }
 
         fn resolveArbiters(space: *Space) void {
@@ -142,6 +169,74 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
                 callback.func(space, callback.data);
             }
             space.post_steps.clearRetainingCapacity();
+        }
+
+        fn updateSleepStates(space: *Space) void {
+            for (space.bodies.items) |body| {
+                if (body.body_type != .dynamic) continue;
+                if (body.sleeping) continue;
+                const energy = body.kineticEnergy();
+                if (energy > space.sleep_energy_threshold) {
+                    body.idle_stamp = space.stamp;
+                    continue;
+                }
+
+                if (space.stamp - body.idle_stamp >= space.sleep_delay) {
+                    body.sleeping = true;
+                    body.v = vect.cpvzero;
+                    body.w = 0.0;
+                }
+            }
+        }
+
+        fn activatePair(space: *Space, a: *shape_base.cpShape, b: *shape_base.cpShape) void {
+            space.activateBody(a.body);
+            space.activateBody(b.body);
+        }
+
+        fn selectHandler(space: *Space, a: *shape_base.cpShape, b: *shape_base.cpShape) Handler {
+            if (space.handlers.get(a.collision_type)) |handler| return handler;
+            if (space.handlers.get(b.collision_type)) |handler| return handler;
+            if (space.wildcard_handlers.get(a.collision_type)) |handler| return handler;
+            if (space.wildcard_handlers.get(b.collision_type)) |handler| return handler;
+            return space.handler;
+        }
+
+        fn fetchArbiter(space: *Space, a: *shape_base.cpShape, b: *shape_base.cpShape) ?*arbiter.cpArbiter {
+            const key = makePairKey(a, b);
+            var gop = space.arbiter_cache.getOrPut(key) catch return null;
+            if (!gop.found_existing) {
+                gop.value_ptr.* = .{ .value = arbiter.cpArbiter.init(a, b), .stamp = space.stamp };
+            }
+            gop.value_ptr.stamp = space.stamp;
+            gop.value_ptr.value.shape_a = a;
+            gop.value_ptr.value.shape_b = b;
+            gop.value_ptr.value.clear();
+            return &gop.value_ptr.value;
+        }
+
+        fn pruneArbiterCache(space: *Space) void {
+            var stale_keys = std.ArrayList(u128).init(space.allocator);
+            defer stale_keys.deinit();
+
+            var it = space.arbiter_cache.iterator();
+            while (it.next()) |entry| {
+                if (entry.value_ptr.stamp != space.stamp) {
+                    stale_keys.append(entry.key_ptr.*) catch {};
+                }
+            }
+
+            for (stale_keys.items) |key| {
+                _ = space.arbiter_cache.remove(key);
+            }
+        }
+
+        fn makePairKey(a: *const shape_base.cpShape, b: *const shape_base.cpShape) u128 {
+            const first = @intFromPtr(a);
+            const second = @intFromPtr(b);
+            const min_ptr = @min(first, second);
+            const max_ptr = @max(first, second);
+            return (@as(u128, min_ptr) << 64) | @as(u128, max_ptr);
         }
 
         const QueryContext = struct {

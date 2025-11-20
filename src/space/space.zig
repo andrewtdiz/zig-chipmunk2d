@@ -194,11 +194,19 @@ fn shapeBounds(ptr: *const anyopaque, _: ?*const anyopaque) bb.cpBB {
     return shape.bbValue();
 }
 
+const CachedArbiter = struct {
+    value: arbiter.cpArbiter,
+    stamp: u64,
+};
+
 pub const cpSpace = struct {
     allocator: std.mem.Allocator,
     gravity: vect.cpVect = vect.cpvzero,
     damping: types.cpFloat = 1.0,
     iterations: usize = 10,
+    stamp: u64 = 0,
+    sleep_energy_threshold: types.cpFloat = 0.01,
+    sleep_delay: u64 = 20,
 
     bodies: std.ArrayList(*body_mod.cpBody),
     shapes: std.ArrayList(*shape_base.cpShape),
@@ -206,9 +214,12 @@ pub const cpSpace = struct {
     static_shapes: std.ArrayList(*shape_base.cpShape),
     constraints: std.ArrayList(ConstraintEntry),
     arbiters: std.ArrayList(arbiter.cpArbiter),
+    arbiter_cache: std.AutoHashMap(u128, CachedArbiter),
     post_steps: std.ArrayList(PostStepCallback),
     collision_cache: collision.CollisionIdCache,
     constraint_runtime: ConstraintRuntimeStorage,
+    handlers: std.AutoHashMap(types.cpCollisionType, CollisionHandler),
+    wildcard_handlers: std.AutoHashMap(types.cpCollisionType, CollisionHandler),
     handler: CollisionHandler = .{},
     dynamic_index: ManagedIndex,
     static_index: ManagedIndex,
@@ -222,9 +233,12 @@ pub const cpSpace = struct {
             .static_shapes = std.ArrayList(*shape_base.cpShape).init(allocator),
             .constraints = std.ArrayList(ConstraintEntry).init(allocator),
             .arbiters = std.ArrayList(arbiter.cpArbiter).init(allocator),
+            .arbiter_cache = std.AutoHashMap(u128, CachedArbiter).init(allocator),
             .post_steps = std.ArrayList(PostStepCallback).init(allocator),
             .collision_cache = collision.CollisionIdCache.init(allocator),
             .constraint_runtime = ConstraintRuntimeStorage.init(allocator),
+            .handlers = std.AutoHashMap(types.cpCollisionType, CollisionHandler).init(allocator),
+            .wildcard_handlers = std.AutoHashMap(types.cpCollisionType, CollisionHandler).init(allocator),
             .dynamic_index = ManagedIndex.init(allocator, .bb_tree, shapeBounds, null, null),
             .static_index = ManagedIndex.init(allocator, .bb_tree, shapeBounds, null, null),
         };
@@ -239,12 +253,17 @@ pub const cpSpace = struct {
         self.static_shapes.deinit();
         self.constraints.deinit();
         self.arbiters.deinit();
+        self.arbiter_cache.deinit();
         self.post_steps.deinit();
+        self.handlers.deinit();
+        self.wildcard_handlers.deinit();
         self.dynamic_index.deinit();
         self.static_index.deinit();
     }
 
     pub fn addBody(self: *cpSpace, body: *body_mod.cpBody) !void {
+        body.sleeping = false;
+        body.idle_stamp = self.stamp;
         try self.bodies.append(body);
     }
 
@@ -314,6 +333,27 @@ pub const cpSpace = struct {
 
     pub fn setCollisionHandler(self: *cpSpace, handler: CollisionHandler) void {
         self.handler = handler;
+    }
+
+    pub fn setCollisionHandlerForType(self: *cpSpace, collision_type: types.cpCollisionType, handler: CollisionHandler) void {
+        self.handlers.put(self.allocator, collision_type, handler) catch {};
+    }
+
+    pub fn setWildcardHandler(self: *cpSpace, collision_type: types.cpCollisionType, handler: CollisionHandler) void {
+        self.wildcard_handlers.put(self.allocator, collision_type, handler) catch {};
+    }
+
+    pub fn wakeBody(self: *cpSpace, body: *body_mod.cpBody) void {
+        body.sleeping = false;
+        body.idle_stamp = self.stamp;
+    }
+
+    pub fn activateBody(self: *cpSpace, body: *body_mod.cpBody) void {
+        self.wakeBody(body);
+        if (body.body_type == .dynamic) {
+            body.v_bias = vect.cpvzero;
+            body.w_bias = 0.0;
+        }
     }
 
     pub fn step(self: *cpSpace, dt: types.cpFloat) void {
