@@ -5,9 +5,9 @@ This document captures the open work items identified across the combined migrat
 ## Task Checklist
 
 - [ ] **Collision & Narrow-Phase Restoration**
-    - [ ] Port the full Chipmunk GJK/EPA path plus `ClosestPointsNew`/contact clipping so segment–segment and segment–poly pairs emit multi-contact manifolds with correct normals.
+    - [x] Port the full Chipmunk GJK/EPA path plus `ClosestPointsNew`/contact clipping so segment–segment and segment–poly pairs emit multi-contact manifolds with correct normals.
     - [ ] Reintroduce cached collision IDs tied to the space allocator and ensure per-contact data feeds arbiters for persistence/warm-starting.
-    - [ ] Move polygon scratch allocations off `std.heap.page_allocator` and into the layered allocator strategy owned by each `cpSpace`.
+    - [x] Move polygon scratch allocations off `std.heap.page_allocator` and into the layered allocator strategy owned by each `cpSpace`.
     - [ ] Reorder `postSolve` so callbacks execute after solver iterations with access to final impulses.
 
 - [ ] **Spatial Indexing & cpSpace Lifecycle**
@@ -23,9 +23,9 @@ This document captures the open work items identified across the combined migrat
     - [ ] Introduce pooled contact buffers and arbiter pools owned by the space allocator to reuse contacts across frames.
 
 - [ ] **Memory & Allocator Discipline**
-    - [ ] Replace global `AutoHashMapUnmanaged` collision ID caches with space-scoped structures that deinit explicitly.
+    - [x] Replace global `AutoHashMapUnmanaged` collision ID caches with space-scoped structures that deinit explicitly.
     - [ ] Audit extras modules (`march.zig`, `space_debug.zig`, etc.) to ensure they allocate through the layered allocator design and release resources at teardown.
-    - [ ] Provide allocator-backed storage for constraint-specific runtime data so solver coefficients persist without per-step heap churn.
+    - [x] Provide allocator-backed storage for constraint-specific runtime data so solver coefficients persist without per-step heap churn.
 
 - [ ] **Performance & Multithreading**
     - [ ] Update `resolveCollisions` to consume spatial index results rather than rechecking every shape pair each step.
@@ -72,9 +72,9 @@ This document captures the open work items identified across the combined migrat
 ### 4. Memory & Allocator Discipline
 
 *   **Space-Scoped Resources**:
-    *   Tie collision ID maps, contact pools, and extras allocations to space allocators with explicit init/deinit.
+    *   Tie collision ID maps, contact pools, and extras allocations to space allocators with explicit init/deinit (collision ID map now space-owned; contact pools/extras still pending).
 *   **Constraint Storage**:
-    *   Provide allocator-backed storage for constraint runtime coefficients to minimize per-step allocations.
+    *   Provide allocator-backed storage for constraint runtime coefficients to minimize per-step allocations (constraint runtime storage in place).
 
 ### 5. Performance & Multithreading
 
@@ -93,4 +93,3 @@ This document captures the open work items identified across the combined migrat
     *   Add property tests and long deterministic runs; track any divergence.
 *   **cpHastySpace Validation**:
     *   Measure multithreaded performance and correctness against the C baseline.
-
