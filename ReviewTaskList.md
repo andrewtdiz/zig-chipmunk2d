@@ -17,10 +17,10 @@ This document captures the open work items identified across the combined migrat
     - [x] Wire spatial indices into `cpSpace.step`/`cpHastySpace` so cached broad-phase data drives collision pair generation.
 
 - [ ] **Constraint Solver & Arbiters**
-    - [ ] Implement real `preStep`, `applyCachedImpulse`, and `applyImpulse` phases that compute effective mass, bias, warm-start impulses, and iterative solver updates for every constraint.
-    - [ ] Add friction, bias, and restitution solving to the contact impulse loop so solver behavior matches Chipmunk’s.
-    - [ ] Expand `cpArbiter` to store per-contact impulses, friction data, collision IDs, and persistent contact metadata.
-    - [ ] Introduce pooled contact buffers and arbiter pools owned by the space allocator to reuse contacts across frames.
+    - [x] Implement real `preStep`, `applyCachedImpulse`, and `applyImpulse` phases that compute effective mass, bias, warm-start impulses, and iterative solver updates for every constraint.
+    - [x] Add friction, bias, and restitution solving to the contact impulse loop so solver behavior matches Chipmunk’s.
+    - [x] Expand `cpArbiter` to store per-contact impulses, friction data, collision IDs, and persistent contact metadata.
+    - [x] Introduce pooled contact buffers and arbiter pools owned by the space allocator to reuse contacts across frames.
 
 - [ ] **Memory & Allocator Discipline**
     - [x] Replace global `AutoHashMapUnmanaged` collision ID caches with space-scoped structures that deinit explicitly.

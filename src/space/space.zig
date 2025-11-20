@@ -215,6 +215,7 @@ pub const cpSpace = struct {
     constraints: std.ArrayList(ConstraintEntry),
     arbiters: std.ArrayList(arbiter.cpArbiter),
     arbiter_cache: std.AutoHashMap(u128, CachedArbiter),
+    arbiter_pool: std.ArrayList(arbiter.cpArbiter),
     post_steps: std.ArrayList(PostStepCallback),
     collision_cache: collision.CollisionIdCache,
     constraint_runtime: ConstraintRuntimeStorage,
@@ -234,6 +235,7 @@ pub const cpSpace = struct {
             .constraints = std.ArrayList(ConstraintEntry).init(allocator),
             .arbiters = std.ArrayList(arbiter.cpArbiter).init(allocator),
             .arbiter_cache = std.AutoHashMap(u128, CachedArbiter).init(allocator),
+            .arbiter_pool = std.ArrayList(arbiter.cpArbiter).init(allocator),
             .post_steps = std.ArrayList(PostStepCallback).init(allocator),
             .collision_cache = collision.CollisionIdCache.init(allocator),
             .constraint_runtime = ConstraintRuntimeStorage.init(allocator),
@@ -254,6 +256,7 @@ pub const cpSpace = struct {
         self.constraints.deinit();
         self.arbiters.deinit();
         self.arbiter_cache.deinit();
+        self.arbiter_pool.deinit();
         self.post_steps.deinit();
         self.handlers.deinit();
         self.wildcard_handlers.deinit();
@@ -496,7 +499,7 @@ pub fn updateShapeCaches(space: *cpSpace) void {
 }
 
 pub fn resolveCollisions(space: *cpSpace) void {
-    space.arbiters.clearRetainingCapacity();
+    recycleArbiters(space);
     for (space.shapes.items, 0..) |shape_a, i| {
         var j: usize = i + 1;
         while (j < space.shapes.items.len) : (j += 1) {
@@ -505,20 +508,25 @@ pub fn resolveCollisions(space: *cpSpace) void {
             const result = collision.collide(&space.collision_cache, shape_a, shape_b);
             if (result.contactCount() == 0) continue;
 
-            var new_arb = arbiter.cpArbiter.init(shape_a, shape_b);
-            new_arb.collision_id = result.id;
-            for (result.contacts.constSlice()) |contact| {
-                new_arb.addContact(contact);
-            }
+            var new_arb = takeArbiter(space, shape_a, shape_b);
+            new_arb.syncContacts(result);
 
             if (space.handler.begin) |begin_func| {
-                if (!begin_func(&new_arb, space)) continue;
+                if (!begin_func(&new_arb, space)) {
+                    stashArbiter(space, new_arb);
+                    continue;
+                }
             }
             if (space.handler.preSolve) |pre_func| {
-                if (!pre_func(&new_arb, space)) continue;
+                if (!pre_func(&new_arb, space)) {
+                    stashArbiter(space, new_arb);
+                    continue;
+                }
             }
 
-            space.arbiters.append(new_arb) catch {};
+            space.arbiters.append(new_arb) catch {
+                stashArbiter(space, new_arb);
+            };
         }
     }
 }
@@ -531,30 +539,8 @@ pub fn resolveArbitersRange(space: *cpSpace, start: usize, end: usize) void {
     var idx = start;
     while (idx < end) : (idx += 1) {
         var arb_ptr = &space.arbiters.items[idx];
-        const shape_a = arb_ptr.shape_a;
-        const shape_b = arb_ptr.shape_b;
-        const body_a = shape_a.body;
-        const body_b = shape_b.body;
-
-        for (arb_ptr.contacts.constSlice()) |contact| {
-            if (contact.distance >= 0.0) continue;
-            const total_inv = body_a.m_inv + body_b.m_inv;
-            if (total_inv == 0.0) continue;
-
-            const penetration = -contact.distance;
-            const correction = vect.cpvmult(contact.normal, penetration);
-            body_a.p = vect.cpvsub(body_a.p, vect.cpvmult(correction, body_a.m_inv / total_inv));
-            body_b.p = vect.cpvadd(body_b.p, vect.cpvmult(correction, body_b.m_inv / total_inv));
-
-            const relative = vect.cpvsub(body_b.v, body_a.v);
-            const vel_normal = vect.cpvdot(relative, contact.normal);
-            if (vel_normal > 0.0) continue;
-            const elasticity = types.cpfmax(shape_a.elasticity, shape_b.elasticity);
-            const impulse = -(1.0 + elasticity) * vel_normal / total_inv;
-            const impulse_vec = vect.cpvmult(contact.normal, impulse);
-            body_a.v = vect.cpvsub(body_a.v, vect.cpvmult(impulse_vec, body_a.m_inv));
-            body_b.v = vect.cpvadd(body_b.v, vect.cpvmult(impulse_vec, body_b.m_inv));
-        }
+        arb_ptr.preStep(1.0);
+        arb_ptr.applyImpulse();
 
         if (space.handler.separate) |sep_func| {
             sep_func(arb_ptr, space);
@@ -583,6 +569,29 @@ fn cacheShapeInternal(shape: *shape_base.cpShape) void {
         .segment => asSegment(shape).cacheBB(),
         .poly => asPoly(shape).cacheBB(),
     }
+}
+
+fn recycleArbiters(space: *cpSpace) void {
+    for (space.arbiters.items) |arb| {
+        space.arbiter_pool.append(arb) catch {};
+    }
+    space.arbiters.clearRetainingCapacity();
+}
+
+fn takeArbiter(space: *cpSpace, shape_a: *shape_base.cpShape, shape_b: *shape_base.cpShape) arbiter.cpArbiter {
+    var idx: usize = 0;
+    while (idx < space.arbiter_pool.items.len) : (idx += 1) {
+        if (space.arbiter_pool.items[idx].matches(shape_a, shape_b)) {
+            var pooled = space.arbiter_pool.swapRemove(idx);
+            pooled.reuse(shape_a, shape_b);
+            return pooled;
+        }
+    }
+    return arbiter.cpArbiter.init(shape_a, shape_b);
+}
+
+fn stashArbiter(space: *cpSpace, arb: arbiter.cpArbiter) void {
+    space.arbiter_pool.append(arb) catch {};
 }
 fn asCircle(shape: *shape_base.cpShape) *circle.cpCircleShape {
     return @as(*circle.cpCircleShape, @ptrCast(shape));
