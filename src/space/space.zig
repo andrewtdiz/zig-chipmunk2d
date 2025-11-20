@@ -499,36 +499,9 @@ pub fn updateShapeCaches(space: *cpSpace) void {
 }
 
 pub fn resolveCollisions(space: *cpSpace) void {
-    recycleArbiters(space);
-    for (space.shapes.items, 0..) |shape_a, i| {
-        var j: usize = i + 1;
-        while (j < space.shapes.items.len) : (j += 1) {
-            const shape_b = space.shapes.items[j];
-            if (shape_base.cpShapeFilter.reject(shape_a.filter, shape_b.filter)) continue;
-            const result = collision.collide(&space.collision_cache, shape_a, shape_b);
-            if (result.contactCount() == 0) continue;
-
-            var new_arb = takeArbiter(space, shape_a, shape_b);
-            new_arb.syncContacts(result);
-
-            if (space.handler.begin) |begin_func| {
-                if (!begin_func(&new_arb, space)) {
-                    stashArbiter(space, new_arb);
-                    continue;
-                }
-            }
-            if (space.handler.preSolve) |pre_func| {
-                if (!pre_func(&new_arb, space)) {
-                    stashArbiter(space, new_arb);
-                    continue;
-                }
-            }
-
-            space.arbiters.append(new_arb) catch {
-                stashArbiter(space, new_arb);
-            };
-        }
-    }
+    startBroadPhase(space);
+    resolveCollisionsRange(space, 0, space.dynamic_shapes.items.len, null);
+    finishBroadPhase(space);
 }
 
 pub fn resolveArbiters(space: *cpSpace) void {
@@ -578,6 +551,33 @@ fn recycleArbiters(space: *cpSpace) void {
     space.arbiters.clearRetainingCapacity();
 }
 
+pub fn startBroadPhase(space: *cpSpace) void {
+    space.stamp +%= 1;
+    recycleArbiters(space);
+    space.dynamic_index.reindex() catch {};
+}
+
+pub fn resolveCollisionsRange(space: *cpSpace, start: usize, end: usize, mutex: ?*std.Thread.Mutex) void {
+    var idx = start;
+    while (idx < end) : (idx += 1) {
+        const shape = space.dynamic_shapes.items[idx];
+        var ctx = BroadPhaseContext{
+            .space = space,
+            .primary = shape,
+            .static_query = false,
+            .mutex = mutex,
+        };
+        space.dynamic_index.query(shape.bbValue(), queryPairs, &ctx);
+        ctx.static_query = true;
+        space.static_index.query(shape.bbValue(), queryPairs, &ctx);
+    }
+}
+
+pub fn finishBroadPhase(space: *cpSpace) void {
+    syncArbiterCache(space);
+    pruneArbiterCache(space);
+}
+
 fn takeArbiter(space: *cpSpace, shape_a: *shape_base.cpShape, shape_b: *shape_base.cpShape) arbiter.cpArbiter {
     var idx: usize = 0;
     while (idx < space.arbiter_pool.items.len) : (idx += 1) {
@@ -592,6 +592,113 @@ fn takeArbiter(space: *cpSpace, shape_a: *shape_base.cpShape, shape_b: *shape_ba
 
 fn stashArbiter(space: *cpSpace, arb: arbiter.cpArbiter) void {
     space.arbiter_pool.append(arb) catch {};
+}
+
+fn selectHandler(space: *cpSpace, a: *shape_base.cpShape, b: *shape_base.cpShape) CollisionHandler {
+    if (space.handlers.get(a.collision_type)) |handler| return handler;
+    if (space.handlers.get(b.collision_type)) |handler| return handler;
+    if (space.wildcard_handlers.get(a.collision_type)) |handler| return handler;
+    if (space.wildcard_handlers.get(b.collision_type)) |handler| return handler;
+    return space.handler;
+}
+
+fn makePairKey(a: *const shape_base.cpShape, b: *const shape_base.cpShape) u128 {
+    const first = @intFromPtr(a);
+    const second = @intFromPtr(b);
+    const min_ptr = @min(first, second);
+    const max_ptr = @max(first, second);
+    return (@as(u128, min_ptr) << 64) | @as(u128, max_ptr);
+}
+
+fn fetchArbiter(space: *cpSpace, a: *shape_base.cpShape, b: *shape_base.cpShape) ?*CachedArbiter {
+    const key = makePairKey(a, b);
+    var gop = space.arbiter_cache.getOrPut(key) catch return null;
+    if (!gop.found_existing) {
+        const pooled = takeArbiter(space, a, b);
+        gop.value_ptr.* = .{ .value = pooled, .stamp = space.stamp };
+    }
+    gop.value_ptr.stamp = space.stamp;
+    gop.value_ptr.value.reuse(a, b);
+    return gop.value_ptr;
+}
+
+fn activatePair(space: *cpSpace, a: *shape_base.cpShape, b: *shape_base.cpShape) void {
+    space.activateBody(a.body);
+    space.activateBody(b.body);
+}
+
+fn syncArbiterCache(space: *cpSpace) void {
+    for (space.arbiters.items) |arb_ref| {
+        const key = makePairKey(arb_ref.shape_a, arb_ref.shape_b);
+        if (space.arbiter_cache.getPtr(key)) |cached| {
+            cached.value = arb_ref;
+            cached.stamp = space.stamp;
+        }
+    }
+}
+
+fn pruneArbiterCache(space: *cpSpace) void {
+    var stale_keys = std.ArrayList(u128).init(space.allocator);
+    defer stale_keys.deinit();
+
+    var it = space.arbiter_cache.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.stamp != space.stamp) {
+            stale_keys.append(entry.key_ptr.*) catch {};
+        }
+    }
+
+    for (stale_keys.items) |key| {
+        if (space.arbiter_cache.remove(key)) |cached| {
+            const handler = selectHandler(space, cached.value.shape_a, cached.value.shape_b);
+            if (handler.separate) |sep_func| {
+                var temp = cached.value;
+                sep_func(&temp, space);
+            }
+            stashArbiter(space, cached.value);
+        }
+    }
+}
+
+const BroadPhaseContext = struct {
+    space: *cpSpace,
+    primary: *shape_base.cpShape,
+    static_query: bool,
+    mutex: ?*std.Thread.Mutex,
+};
+
+fn queryPairs(object: *const anyopaque, _: bb.cpBB, ctx_ptr: ?*anyopaque) void {
+    const ctx = @as(*BroadPhaseContext, @ptrCast(ctx_ptr.?));
+    const other = @as(*shape_base.cpShape, @ptrCast(object));
+    if (other == ctx.primary) return;
+    if (!ctx.static_query) {
+        if (@intFromPtr(other) <= @intFromPtr(ctx.primary)) return;
+    }
+    if (ctx.primary.body.sleeping and other.body.sleeping) return;
+    if (shape_base.cpShapeFilter.reject(ctx.primary.filter, other.filter)) return;
+
+    if (ctx.mutex) |lock| {
+        lock.lock();
+        defer lock.unlock();
+    }
+
+    const handler = selectHandler(ctx.space, ctx.primary, other);
+    const result = collision.collide(&ctx.space.collision_cache, ctx.primary, other);
+    if (result.contactCount() == 0) return;
+
+    activatePair(ctx.space, ctx.primary, other);
+
+    const cached = fetchArbiter(ctx.space, ctx.primary, other) orelse return;
+    cached.value.syncContacts(result);
+
+    if (handler.begin) |begin_func| {
+        if (!begin_func(&cached.value, ctx.space)) return;
+    }
+    if (handler.preSolve) |pre_func| {
+        if (!pre_func(&cached.value, ctx.space)) return;
+    }
+
+    ctx.space.arbiters.append(cached.value) catch {};
 }
 fn asCircle(shape: *shape_base.cpShape) *circle.cpCircleShape {
     return @as(*circle.cpCircleShape, @ptrCast(shape));

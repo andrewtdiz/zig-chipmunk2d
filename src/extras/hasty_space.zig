@@ -8,6 +8,7 @@ const types = @import("../core/types.zig");
 const JobPayload = union(enum) {
     constraint: ConstraintJob,
     arbiter: ArbiterJob,
+    broad_phase: BroadPhaseJob,
 };
 
 const ConstraintJob = struct {
@@ -19,6 +20,11 @@ const ConstraintJob = struct {
 
 const ArbiterJob = struct {
     space: *space_mod.cpSpace,
+};
+
+const BroadPhaseJob = struct {
+    space: *space_mod.cpSpace,
+    mutex: *std.Thread.Mutex,
 };
 
 const Job = struct {
@@ -133,6 +139,9 @@ fn executeJob(job: Job) void {
         .arbiter => |payload| {
             space_mod.resolveArbitersRange(payload.space, job.start, job.end);
         },
+        .broad_phase => |payload| {
+            space_mod.resolveCollisionsRange(payload.space, job.start, job.end, payload.mutex);
+        },
     }
 }
 
@@ -143,6 +152,7 @@ pub const cpHastySpace = struct {
     contexts: []WorkerContext = &.{},
     thread_target: usize = 1,
     parallel_threshold: usize = 32,
+    broadphase_mutex: std.Thread.Mutex = .{},
 
     pub fn init(allocator: std.mem.Allocator) cpHastySpace {
         return .{
@@ -184,11 +194,19 @@ pub const cpHastySpace = struct {
 
     pub fn step(self: *cpHastySpace, dt: types.cpFloat) void {
         const dt_coef: types.cpFloat = if (dt != 0.0) dt else 1.0;
+        space_mod.startBroadPhase(&self.space);
         space_mod.updateVelocities(&self.space, dt);
         space_mod.runConstraintCallback(self.space.constraints.items, dt, dt_coef, .preStep);
         space_mod.runConstraintCallback(self.space.constraints.items, dt, dt_coef, .applyCachedImpulse);
         space_mod.updateShapeCaches(&self.space);
-        space_mod.resolveCollisions(&self.space);
+
+        const dynamic_len = self.space.dynamic_shapes.items.len;
+        if (self.workers.len == 0 or dynamic_len < self.parallel_threshold) {
+            space_mod.resolveCollisionsRange(&self.space, 0, dynamic_len, null);
+        } else {
+            const payload = JobPayload{ .broad_phase = .{ .space = &self.space, .mutex = &self.broadphase_mutex } };
+            self.dispatchJobs(payload, dynamic_len);
+        }
 
         var iteration: usize = 0;
         while (iteration < self.space.iterations) : (iteration += 1) {
@@ -200,6 +218,7 @@ pub const cpHastySpace = struct {
         space_mod.integratePositions(&self.space, dt);
         space_mod.runConstraintCallback(self.space.constraints.items, dt, dt_coef, .postStep);
         space_mod.runPostSteps(&self.space);
+        space_mod.finishBroadPhase(&self.space);
     }
 
     fn resizeWorkers(self: *cpHastySpace, requested: usize) !void {
