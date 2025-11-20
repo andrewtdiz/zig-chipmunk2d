@@ -37,6 +37,13 @@ pub const PinJoint = struct {
     anchor_a: vect.cpVect,
     anchor_b: vect.cpVect,
     dist: types.cpFloat,
+    r1: vect.cpVect = vect.cpvzero,
+    r2: vect.cpVect = vect.cpvzero,
+    n: vect.cpVect = vect.cpvzero,
+    n_mass: types.cpFloat = 0.0,
+    bias: types.cpFloat = 0.0,
+    jn_acc: types.cpFloat = 0.0,
+    jn_max: types.cpFloat = 0.0,
 
     pub fn init(
         a: *body_mod.cpBody,
@@ -49,6 +56,43 @@ pub const PinJoint = struct {
         const world_b = worldAnchor(b, anchor_b);
         const length = rest_length orelse vect.cpvdist(world_a, world_b);
         return .{ .base = constraint_base.cpConstraint.init(a, b), .anchor_a = anchor_a, .anchor_b = anchor_b, .dist = length };
+    }
+
+    pub fn preStep(self: *PinJoint, dt: types.cpFloat) void {
+        self.r1 = vect.cpvrotate(self.anchor_a, self.base.a.rotationVector());
+        self.r2 = vect.cpvrotate(self.anchor_b, self.base.b.rotationVector());
+
+        const delta = vect.cpvsub(vect.cpvadd(self.base.b.p, self.r2), vect.cpvadd(self.base.a.p, self.r1));
+        const dist = vect.cpvlength(delta);
+        const inv_dist = if (dist > 0.0) 1.0 / dist else 0.0;
+        self.n = vect.cpvmult(delta, inv_dist);
+
+        const mass_scalar = kScalar(self.base.a, self.base.b, self.r1, self.r2, self.n);
+        self.n_mass = if (mass_scalar > 0.0) 1.0 / mass_scalar else 0.0;
+
+        const bias_coef = constraint_base.biasCoefficient(self.base.error_bias, dt);
+        const bias_val = -bias_coef * (dist - self.dist) / dt;
+        self.bias = types.cpfclamp(bias_val, -self.base.max_bias, self.base.max_bias);
+
+        self.jn_max = self.base.max_force * dt;
+        self.jn_acc = types.cpfclamp(self.jn_acc, -self.jn_max, self.jn_max);
+    }
+
+    pub fn applyCachedImpulse(self: *PinJoint, dt_coef: types.cpFloat) void {
+        const impulse = vect.cpvmult(self.n, self.jn_acc * dt_coef);
+        applyImpulses(self.base.a, self.base.b, self.r1, self.r2, impulse);
+    }
+
+    pub fn applyImpulse(self: *PinJoint) void {
+        const vrn = normalRelativeVelocity(self.base.a, self.base.b, self.r1, self.r2, self.n);
+
+        var jn = (self.bias - vrn) * self.n_mass;
+        const jn_old = self.jn_acc;
+        self.jn_acc = types.cpfclamp(jn_old + jn, -self.jn_max, self.jn_max);
+        jn = self.jn_acc - jn_old;
+
+        const impulse = vect.cpvmult(self.n, jn);
+        applyImpulses(self.base.a, self.base.b, self.r1, self.r2, impulse);
     }
 
     pub fn solvePositions(self: *PinJoint) void {
@@ -66,6 +110,43 @@ pub const PinJoint = struct {
         applyLinearCorrection(self.base.a, self.base.b, correction);
     }
 };
+
+fn normalRelativeVelocity(
+    a: *body_mod.cpBody,
+    b: *body_mod.cpBody,
+    r1: vect.cpVect,
+    r2: vect.cpVect,
+    n: vect.cpVect,
+) types.cpFloat {
+    const va = vect.cpvadd(a.v, vect.cpvmult(vect.cpvperp(r1), a.w));
+    const vb = vect.cpvadd(b.v, vect.cpvmult(vect.cpvperp(r2), b.w));
+    return vect.cpvdot(vect.cpvsub(vb, va), n);
+}
+
+fn kScalar(
+    a: *body_mod.cpBody,
+    b: *body_mod.cpBody,
+    r1: vect.cpVect,
+    r2: vect.cpVect,
+    n: vect.cpVect,
+) types.cpFloat {
+    const r1cn = vect.cpvcross(r1, n);
+    const r2cn = vect.cpvcross(r2, n);
+    return a.m_inv + b.m_inv + a.i_inv * r1cn * r1cn + b.i_inv * r2cn * r2cn;
+}
+
+fn applyImpulses(
+    a: *body_mod.cpBody,
+    b: *body_mod.cpBody,
+    r1: vect.cpVect,
+    r2: vect.cpVect,
+    impulse: vect.cpVect,
+) void {
+    a.v = vect.cpvsub(a.v, vect.cpvmult(impulse, a.m_inv));
+    a.w -= a.i_inv * vect.cpvcross(r1, impulse);
+    b.v = vect.cpvadd(b.v, vect.cpvmult(impulse, b.m_inv));
+    b.w += b.i_inv * vect.cpvcross(r2, impulse);
+}
 
 pub const SlideJoint = struct {
     base: constraint_base.cpConstraint,

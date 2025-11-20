@@ -717,12 +717,26 @@ fn castPayload(comptime T: type, payload: *anyopaque) *T {
 }
 
 pub fn opsForPinJoint(_: *joints.PinJoint) ConstraintOps {
-    return .{ .postStep = pinPostStep };
+    return .{
+        .preStep = pinPreStep,
+        .applyCachedImpulse = pinApplyCached,
+        .applyImpulse = pinApplyImpulse,
+    };
 }
 
-fn pinPostStep(payload: *anyopaque) void {
+fn pinPreStep(payload: *anyopaque, dt: types.cpFloat) void {
     const joint = castPayload(joints.PinJoint, payload);
-    joint.solvePositions();
+    joint.preStep(dt);
+}
+
+fn pinApplyCached(payload: *anyopaque, dt_coef: types.cpFloat) void {
+    const joint = castPayload(joints.PinJoint, payload);
+    joint.applyCachedImpulse(dt_coef);
+}
+
+fn pinApplyImpulse(payload: *anyopaque) void {
+    const joint = castPayload(joints.PinJoint, payload);
+    joint.applyImpulse();
 }
 
 pub fn opsForSlideJoint(_: *joints.SlideJoint) ConstraintOps {
