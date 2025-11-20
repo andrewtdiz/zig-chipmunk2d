@@ -79,7 +79,7 @@ pub const cpSpaceHash = struct {
 
         var entry_it = self.entries.iterator();
         while (entry_it.next()) |entry| {
-            entry.value_ptr.cells.deinit();
+            entry.value_ptr.cells.deinit(self.allocator);
         }
         self.entries.deinit();
     }
@@ -88,9 +88,9 @@ pub const cpSpaceHash = struct {
         const bounds = self.bounds_func(object, self.context);
         var entry = Entry{
             .bounds = bounds,
-            .cells = std.ArrayList(CellKey).init(self.allocator),
+            .cells = .empty,
         };
-        errdefer entry.cells.deinit();
+        errdefer entry.cells.deinit(self.allocator);
         try self.populateEntry(&entry, object);
         try self.entries.put(object, entry);
     }
@@ -98,7 +98,7 @@ pub const cpSpaceHash = struct {
     pub fn remove(self: *cpSpaceHash, object: *const anyopaque) void {
         if (self.entries.fetchRemove(object)) |kv| {
             self.removeFromCells(kv.value, object);
-            kv.value.cells.deinit();
+            kv.value.cells.deinit(self.allocator);
         }
     }
 
@@ -154,7 +154,7 @@ pub const cpSpaceHash = struct {
             var x = range.min_x;
             while (x <= range.max_x) : (x += 1) {
                 const key = encodeCell(x, y);
-                try entry.cells.append(key);
+                try entry.cells.append(self.allocator, key);
                 var gop = try self.cells.getOrPut(key);
                 if (!gop.found_existing) {
                     gop.value_ptr.* = .{};
@@ -218,9 +218,10 @@ test "cpSpaceHash basic query" {
     try hash.insert(&bounds[1]);
     try std.testing.expectEqual(@as(usize, 2), hash.count());
 
-    var matches = std.ArrayList(bb.cpBB).init(allocator);
-    defer matches.deinit();
-    hash.query(bb.cpBBNew(-1.0, -1.0, 2.0, 2.0), spatial_interface.accumulateQuery, &matches);
+    var matches: std.ArrayList(bb.cpBB) = .empty;
+    defer matches.deinit(allocator);
+    var accumulator_ctx = spatial_interface.AccumulateContext{ .list = &matches, .allocator = allocator };
+    hash.query(bb.cpBBNew(-1.0, -1.0, 2.0, 2.0), spatial_interface.accumulateQuery, &accumulator_ctx);
     try std.testing.expectEqual(@as(usize, 1), matches.items.len);
 }
 

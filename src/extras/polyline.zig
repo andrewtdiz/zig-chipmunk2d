@@ -7,13 +7,13 @@ pub const cpPolyline = struct {
     verts: std.ArrayList(vect.cpVect),
 
     pub fn init(allocator: std.mem.Allocator, capacity: usize) cpPolyline {
-        var verts = std.ArrayList(vect.cpVect).init(allocator);
-        verts.ensureTotalCapacity(capacity) catch {};
+        var verts: std.ArrayList(vect.cpVect) = .empty;
+        verts.ensureTotalCapacity(allocator, capacity) catch {};
         return .{ .allocator = allocator, .verts = verts };
     }
 
     pub fn deinit(self: *cpPolyline) void {
-        self.verts.deinit();
+        self.verts.deinit(self.allocator);
     }
 
     pub fn count(self: cpPolyline) usize {
@@ -26,11 +26,11 @@ pub const cpPolyline = struct {
     }
 
     pub fn push(self: *cpPolyline, v: vect.cpVect) void {
-        self.verts.append(v) catch {};
+        self.verts.append(self.allocator, v) catch {};
     }
 
     pub fn enqueue(self: *cpPolyline, v: vect.cpVect) void {
-        self.verts.insert(0, v) catch {};
+        self.verts.insert(self.allocator, 0, v) catch {};
     }
 };
 
@@ -41,7 +41,7 @@ fn sharpness(a: vect.cpVect, b: vect.cpVect, c: vect.cpVect) types.cpFloat {
 pub fn cpPolylineSimplifyVertexes(line: *const cpPolyline, allocator: std.mem.Allocator, tol: types.cpFloat) cpPolyline {
     if (line.count() <= 2) {
         var copy = cpPolyline.init(allocator, line.count());
-        copy.verts.appendSlice(line.verts.items) catch {};
+        copy.verts.appendSlice(allocator, line.verts.items) catch {};
         return copy;
     }
 
@@ -150,12 +150,12 @@ pub const cpPolylineSet = struct {
     lines: std.ArrayList(cpPolyline),
 
     pub fn init(allocator: std.mem.Allocator) cpPolylineSet {
-        return .{ .allocator = allocator, .lines = std.ArrayList(cpPolyline).init(allocator) };
+        return .{ .allocator = allocator, .lines = .empty };
     }
 
     pub fn deinit(self: *cpPolylineSet) void {
         for (self.lines.items) |*line| line.deinit();
-        self.lines.deinit();
+        self.lines.deinit(self.allocator);
     }
 
     fn findEnds(self: cpPolylineSet, v: vect.cpVect) ?usize {
@@ -173,7 +173,7 @@ pub const cpPolylineSet = struct {
     }
 
     fn pushLine(self: *cpPolylineSet, line: cpPolyline) void {
-        self.lines.append(line) catch {};
+        self.lines.append(self.allocator, line) catch {};
     }
 
     fn addLine(self: *cpPolylineSet, v0: vect.cpVect, v1: vect.cpVect) void {
@@ -186,7 +186,7 @@ pub const cpPolylineSet = struct {
     fn join(self: *cpPolylineSet, before: usize, after: usize) void {
         var lbefore = &self.lines.items[before];
         var lafter = self.lines.items[after];
-        lbefore.verts.appendSlice(lafter.verts.items) catch {};
+        lbefore.verts.appendSlice(self.allocator, lafter.verts.items) catch {};
         lafter.deinit();
         _ = self.lines.orderedRemove(after);
     }

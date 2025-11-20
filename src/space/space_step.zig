@@ -197,14 +197,14 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
         }
 
         fn pruneArbiterCache(space: *Space) void {
-            var stale_keys = std.ArrayList(u128).init(space.allocator);
-            defer stale_keys.deinit();
+            var stale_keys: std.ArrayList(u128) = .empty;
+            defer stale_keys.deinit(space.allocator);
 
             var it = space.arbiter_cache.iterator();
             while (it.next()) |entry| {
                 if (entry.value_ptr.stamp != space.stamp) {
-                    stale_keys.append(entry.key_ptr.*) catch {};
-                }
+                    stale_keys.append(space.allocator, entry.key_ptr.*) catch {};
+            }
             }
 
             for (stale_keys.items) |key| {

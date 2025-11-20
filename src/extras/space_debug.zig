@@ -72,12 +72,12 @@ fn drawShape(shape: *shape_base.cpShape, options: cpSpaceDebugDrawOptions) void 
         },
         .poly => {
             const p = @as(*poly.cpPolyShape, @ptrCast(shape));
-            var transformed = std.ArrayList(vect.cpVect).init(options.allocator);
-            defer transformed.deinit();
-            transformed.ensureTotalCapacity(p.vertices.len) catch {};
+            var transformed: std.ArrayList(vect.cpVect) = .empty;
+            defer transformed.deinit(options.allocator);
+            transformed.ensureTotalCapacity(options.allocator, p.vertices.len) catch {};
             const rot = body.rotationVector();
             for (p.vertices) |vertex| {
-                transformed.append(vect.cpvadd(body.p, vect.cpvrotate(vertex, rot))) catch {};
+                transformed.append(options.allocator, vect.cpvadd(body.p, vect.cpvrotate(vertex, rot))) catch {};
             }
             options.drawPolygon(transformed.items.len, transformed.items, p.radius, outline_color, fill_color, options.data);
         },

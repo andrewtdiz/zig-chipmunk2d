@@ -56,9 +56,10 @@ pub fn testBBTreeDelegatesToIndex() !void {
     bounds[0] = bb.cpBBNew(4.0, 4.0, 5.0, 5.0);
     try tree.reindex();
 
-    var matches = std.ArrayList(bb.cpBB).init(allocator);
-    defer matches.deinit();
-    tree.query(bb.cpBBNew(3.5, 3.5, 5.5, 5.5), spatial_interface.accumulateQuery, &matches);
+    var matches: std.ArrayList(bb.cpBB) = .empty;
+    defer matches.deinit(allocator);
+    var accumulator_ctx = spatial_interface.AccumulateContext{ .list = &matches, .allocator = allocator };
+    tree.query(bb.cpBBNew(3.5, 3.5, 5.5, 5.5), spatial_interface.accumulateQuery, &accumulator_ctx);
     try std.testing.expectEqual(@as(usize, 1), matches.items.len);
 }
 

@@ -55,17 +55,17 @@ const JobQueue = struct {
     shutdown: bool = false,
 
     fn init(allocator: std.mem.Allocator) JobQueue {
-        return .{ .allocator = allocator, .jobs = std.ArrayList(Job).init(allocator) };
+        return .{ .allocator = allocator, .jobs = .empty };
     }
 
     fn deinit(self: *JobQueue) void {
-        self.jobs.deinit();
+        self.jobs.deinit(self.allocator);
     }
 
     fn push(self: *JobQueue, job: Job) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        try self.jobs.append(job);
+        try self.jobs.append(self.allocator, job);
         self.pending += 1;
         self.work_ready.signal();
     }

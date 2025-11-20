@@ -41,16 +41,16 @@ pub const cpSpatialIndex = struct {
             .allocator = allocator,
             .bounds_func = bounds_func,
             .context = context,
-            .nodes = std.ArrayList(Node).init(allocator),
+            .nodes = .empty,
             .lookup = std.AutoHashMap(*const anyopaque, usize).init(allocator),
-            .stack = std.ArrayList(usize).init(allocator),
+            .stack = .empty,
         };
     }
 
     pub fn deinit(self: *cpSpatialIndex) void {
-        self.nodes.deinit();
+        self.nodes.deinit(self.allocator);
         self.lookup.deinit();
-        self.stack.deinit();
+        self.stack.deinit(self.allocator);
     }
 
     pub fn insert(self: *cpSpatialIndex, object: *const anyopaque) !void {
@@ -103,7 +103,7 @@ pub const cpSpatialIndex = struct {
     pub fn query(self: *cpSpatialIndex, bounds: bb.cpBB, func: *const QueryFunc, data: ?*anyopaque) void {
         if (self.root == null_index) return;
         self.stack.clearRetainingCapacity();
-        self.stack.append(self.root) catch return;
+        self.stack.append(self.allocator, self.root) catch return;
 
         while (self.stack.items.len > 0) {
             const index = self.stack.pop();
@@ -112,8 +112,8 @@ pub const cpSpatialIndex = struct {
             if (node.isLeaf()) {
                 func(node.object.?, node.bounds, data);
             } else {
-                if (node.left != null_index) self.stack.append(node.left) catch return;
-                if (node.right != null_index) self.stack.append(node.right) catch return;
+                if (node.left != null_index) self.stack.append(self.allocator, node.left) catch return;
+                if (node.right != null_index) self.stack.append(self.allocator, node.right) catch return;
             }
         }
     }
@@ -126,7 +126,7 @@ pub const cpSpatialIndex = struct {
         }
 
         const index = self.nodes.items.len;
-        try self.nodes.append(.{});
+        try self.nodes.append(self.allocator, .{});
         return index;
     }
 
@@ -348,10 +348,15 @@ pub fn bbForPointer(ptr: *const anyopaque, ctx: ?*const anyopaque) bb.cpBB {
     return shape.*;
 }
 
+pub const AccumulateContext = struct {
+    list: *std.ArrayList(bb.cpBB),
+    allocator: std.mem.Allocator,
+};
+
 pub fn accumulateQuery(object: *const anyopaque, object_bounds: bb.cpBB, ctx: ?*anyopaque) void {
     _ = object;
-    const writer = @as(*std.ArrayList(bb.cpBB), @ptrCast(ctx.?));
-    writer.append(object_bounds) catch {};
+    const writer = @as(*AccumulateContext, @ptrCast(ctx.?));
+    writer.list.append(writer.allocator, object_bounds) catch {};
 }
 
 pub fn accumulateEach(object: *const anyopaque, ctx: ?*anyopaque) void {
@@ -384,9 +389,10 @@ pub fn testSpatialIndexLifecycle() !void {
     index.each(accumulateEach, &visited);
     try std.testing.expectEqual(@as(usize, 3), visited);
 
-    var matches = std.ArrayList(bb.cpBB).init(allocator);
-    defer matches.deinit();
-    index.query(bb.cpBBNew(-0.5, -0.5, 2.5, 2.5), accumulateQuery, &matches);
+    var matches: std.ArrayList(bb.cpBB) = .empty;
+    defer matches.deinit(allocator);
+    var accumulator_ctx = AccumulateContext{ .list = &matches, .allocator = allocator };
+    index.query(bb.cpBBNew(-0.5, -0.5, 2.5, 2.5), accumulateQuery, &accumulator_ctx);
     try std.testing.expect(matches.items.len >= 2);
 
     index.remove(&bounds[1]);
@@ -396,7 +402,7 @@ pub fn testSpatialIndexLifecycle() !void {
     try index.reindex();
 
     matches.clearRetainingCapacity();
-    index.query(bb.cpBBNew(9.0, 9.0, 12.0, 12.0), accumulateQuery, &matches);
+    index.query(bb.cpBBNew(9.0, 9.0, 12.0, 12.0), accumulateQuery, &accumulator_ctx);
     try std.testing.expectEqual(@as(usize, 1), matches.items.len);
 }
 
@@ -414,9 +420,10 @@ pub fn testSpatialIndexReindex() !void {
     bounds[0] = bb.cpBBNew(5.0, 5.0, 6.0, 6.0);
     try index.reindex();
 
-    var matches = std.ArrayList(bb.cpBB).init(allocator);
-    defer matches.deinit();
-    index.query(bb.cpBBNew(4.0, 4.0, 7.0, 7.0), accumulateQuery, &matches);
+    var matches: std.ArrayList(bb.cpBB) = .empty;
+    defer matches.deinit(allocator);
+    var accumulator_ctx = AccumulateContext{ .list = &matches, .allocator = allocator };
+    index.query(bb.cpBBNew(4.0, 4.0, 7.0, 7.0), accumulateQuery, &accumulator_ctx);
     try std.testing.expectEqual(@as(usize, 1), matches.items.len);
 }
 

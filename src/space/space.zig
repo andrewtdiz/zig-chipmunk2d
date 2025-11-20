@@ -228,15 +228,15 @@ pub const cpSpace = struct {
     pub fn init(allocator: std.mem.Allocator) cpSpace {
         return .{
             .allocator = allocator,
-            .bodies = std.ArrayList(*body_mod.cpBody).init(allocator),
-            .shapes = std.ArrayList(*shape_base.cpShape).init(allocator),
-            .dynamic_shapes = std.ArrayList(*shape_base.cpShape).init(allocator),
-            .static_shapes = std.ArrayList(*shape_base.cpShape).init(allocator),
-            .constraints = std.ArrayList(ConstraintEntry).init(allocator),
-            .arbiters = std.ArrayList(arbiter.cpArbiter).init(allocator),
+            .bodies = .empty,
+            .shapes = .empty,
+            .dynamic_shapes = .empty,
+            .static_shapes = .empty,
+            .constraints = .empty,
+            .arbiters = .empty,
             .arbiter_cache = std.AutoHashMap(u128, CachedArbiter).init(allocator),
-            .arbiter_pool = std.ArrayList(arbiter.cpArbiter).init(allocator),
-            .post_steps = std.ArrayList(PostStepCallback).init(allocator),
+            .arbiter_pool = .empty,
+            .post_steps = .empty,
             .collision_cache = collision.CollisionIdCache.init(allocator),
             .constraint_runtime = ConstraintRuntimeStorage.init(allocator),
             .handlers = std.AutoHashMap(types.cpCollisionType, CollisionHandler).init(allocator),
@@ -249,15 +249,15 @@ pub const cpSpace = struct {
     pub fn deinit(self: *cpSpace) void {
         self.constraint_runtime.deinit();
         self.collision_cache.deinit();
-        self.bodies.deinit();
-        self.shapes.deinit();
-        self.dynamic_shapes.deinit();
-        self.static_shapes.deinit();
-        self.constraints.deinit();
-        self.arbiters.deinit();
+        self.bodies.deinit(self.allocator);
+        self.shapes.deinit(self.allocator);
+        self.dynamic_shapes.deinit(self.allocator);
+        self.static_shapes.deinit(self.allocator);
+        self.constraints.deinit(self.allocator);
+        self.arbiters.deinit(self.allocator);
         self.arbiter_cache.deinit();
-        self.arbiter_pool.deinit();
-        self.post_steps.deinit();
+        self.arbiter_pool.deinit(self.allocator);
+        self.post_steps.deinit(self.allocator);
         self.handlers.deinit();
         self.wildcard_handlers.deinit();
         self.dynamic_index.deinit();
@@ -267,7 +267,7 @@ pub const cpSpace = struct {
     pub fn addBody(self: *cpSpace, body: *body_mod.cpBody) !void {
         body.sleeping = false;
         body.idle_stamp = self.stamp;
-        try self.bodies.append(body);
+        try self.bodies.append(self.allocator, body);
     }
 
     pub fn removeBody(self: *cpSpace, body: *body_mod.cpBody) void {
@@ -275,16 +275,16 @@ pub const cpSpace = struct {
     }
 
     pub fn addShape(self: *cpSpace, shape: *shape_base.cpShape) !void {
-        try self.shapes.append(shape);
+        try self.shapes.append(self.allocator, shape);
         cacheShapeInternal(shape);
         const ptr = @as(*const anyopaque, @ptrCast(shape));
         switch (shape.body.body_type) {
             .static => {
-                try self.static_shapes.append(shape);
+                try self.static_shapes.append(self.allocator, shape);
                 try self.static_index.insert(ptr);
             },
             else => {
-                try self.dynamic_shapes.append(shape);
+                try self.dynamic_shapes.append(self.allocator, shape);
                 try self.dynamic_index.insert(ptr);
             },
         }
@@ -308,7 +308,7 @@ pub const cpSpace = struct {
 
     pub fn addConstraint(self: *cpSpace, constraint: *constraint_base.cpConstraint, ops: ConstraintOps, payload: ?*anyopaque) !void {
         const stored_payload: *anyopaque = payload orelse @as(*anyopaque, @ptrCast(constraint));
-        try self.constraints.append(.{ .constraint = constraint, .payload = stored_payload, .ops = ops });
+        try self.constraints.append(self.allocator, .{ .constraint = constraint, .payload = stored_payload, .ops = ops });
     }
 
     pub fn removeConstraint(self: *cpSpace, constraint: *constraint_base.cpConstraint) void {
@@ -331,7 +331,7 @@ pub const cpSpace = struct {
     }
 
     pub fn addPostStep(self: *cpSpace, key: ?*const anyopaque, func: fn (*cpSpace, *anyopaque) void, data: *anyopaque) !void {
-        try self.post_steps.append(.{ .key = key, .func = func, .data = data });
+        try self.post_steps.append(self.allocator, .{ .key = key, .func = func, .data = data });
     }
 
     pub fn setCollisionHandler(self: *cpSpace, handler: CollisionHandler) void {
@@ -546,7 +546,7 @@ fn cacheShapeInternal(shape: *shape_base.cpShape) void {
 
 fn recycleArbiters(space: *cpSpace) void {
     for (space.arbiters.items) |arb| {
-        space.arbiter_pool.append(arb) catch {};
+        space.arbiter_pool.append(space.allocator, arb) catch {};
     }
     space.arbiters.clearRetainingCapacity();
 }
@@ -591,7 +591,7 @@ fn takeArbiter(space: *cpSpace, shape_a: *shape_base.cpShape, shape_b: *shape_ba
 }
 
 fn stashArbiter(space: *cpSpace, arb: arbiter.cpArbiter) void {
-    space.arbiter_pool.append(arb) catch {};
+    space.arbiter_pool.append(space.allocator, arb) catch {};
 }
 
 fn selectHandler(space: *cpSpace, a: *shape_base.cpShape, b: *shape_base.cpShape) CollisionHandler {

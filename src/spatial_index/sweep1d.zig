@@ -23,17 +23,17 @@ pub const cpSweep1D = struct {
             .allocator = allocator,
             .bounds_func = bounds_func,
             .context = context,
-            .entries = std.ArrayList(Entry).init(allocator),
+            .entries = .empty,
         };
     }
 
     pub fn deinit(self: *cpSweep1D) void {
-        self.entries.deinit();
+        self.entries.deinit(self.allocator);
     }
 
     pub fn insert(self: *cpSweep1D, object: *const anyopaque) !void {
         const bounds = self.bounds_func(object, self.context);
-        try self.entries.append(.{ .object = object, .bounds = bounds });
+        try self.entries.append(self.allocator, .{ .object = object, .bounds = bounds });
         self.dirty = true;
     }
 

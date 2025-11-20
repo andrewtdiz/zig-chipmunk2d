@@ -31,14 +31,14 @@ fn marchCells(
     const x_denom: types.cpFloat = 1.0 / @as(types.cpFloat, @floatFromInt(x_samples - 1));
     const y_denom: types.cpFloat = 1.0 / @as(types.cpFloat, @floatFromInt(y_samples - 1));
 
-    var buffer = std.ArrayList(types.cpFloat).init(allocator);
-    defer buffer.deinit();
-    buffer.ensureTotalCapacity(x_samples) catch {};
+    var buffer: std.ArrayList(types.cpFloat) = .empty;
+    defer buffer.deinit(allocator);
+    buffer.ensureTotalCapacity(allocator, x_samples) catch {};
 
     var i: usize = 0;
     while (i < x_samples) : (i += 1) {
         const x = types.cpflerp(bounds.l, bounds.r, @as(types.cpFloat, @floatFromInt(i)) * x_denom);
-        buffer.append(sample(vect.cpv(x, bounds.b), sample_data)) catch {};
+        buffer.append(allocator, sample(vect.cpv(x, bounds.b), sample_data)) catch {};
     }
 
     var j: usize = 0;
@@ -181,8 +181,8 @@ pub fn cpMarchHard(
 }
 
 test "march soft generates contour segments" {
-    var segments = std.ArrayList(struct { a: vect.cpVect, b: vect.cpVect }).init(std.testing.allocator);
-    defer segments.deinit();
+    var segments: std.ArrayList(struct { a: vect.cpVect, b: vect.cpVect }) = .empty;
+    defer segments.deinit(std.testing.allocator);
 
     const sample = struct {
         fn call(p: vect.cpVect, _: ?*anyopaque) types.cpFloat {
@@ -193,7 +193,7 @@ test "march soft generates contour segments" {
     const collect = struct {
         fn call(a: vect.cpVect, b: vect.cpVect, data: ?*anyopaque) void {
             const list = @as(*std.ArrayList(struct { a: vect.cpVect, b: vect.cpVect }), @ptrCast(@alignCast(data.?)));
-            list.append(.{ .a = a, .b = b }) catch {};
+            list.append(std.testing.allocator, .{ .a = a, .b = b }) catch {};
         }
     }.call;
 
