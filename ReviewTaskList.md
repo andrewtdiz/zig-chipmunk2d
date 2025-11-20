@@ -16,21 +16,21 @@ This document captures the open work items identified across the combined migrat
     - [x] Split dynamic/static body partitions and maintain stamp counters so sleeping metadata can cull inactive islands.
     - [x] Wire spatial indices into `cpSpace.step`/`cpHastySpace` so cached broad-phase data drives collision pair generation.
 
-- [ ] **Constraint Solver & Arbiters**
+- [x] **Constraint Solver & Arbiters**
     - [x] Implement real `preStep`, `applyCachedImpulse`, and `applyImpulse` phases that compute effective mass, bias, warm-start impulses, and iterative solver updates for every constraint.
     - [x] Add friction, bias, and restitution solving to the contact impulse loop so solver behavior matches Chipmunk’s.
     - [x] Expand `cpArbiter` to store per-contact impulses, friction data, collision IDs, and persistent contact metadata.
     - [x] Introduce pooled contact buffers and arbiter pools owned by the space allocator to reuse contacts across frames.
 
-- [ ] **Memory & Allocator Discipline**
+- [x] **Memory & Allocator Discipline**
     - [x] Replace global `AutoHashMapUnmanaged` collision ID caches with space-scoped structures that deinit explicitly.
-    - [ ] Audit extras modules (`march.zig`, `space_debug.zig`, etc.) to ensure they allocate through the layered allocator design and release resources at teardown.
+    - [x] Audit extras modules (`march.zig`, `space_debug.zig`, etc.) to ensure they allocate through the layered allocator design and release resources at teardown.
     - [x] Provide allocator-backed storage for constraint-specific runtime data so solver coefficients persist without per-step heap churn.
 
-- [ ] **Performance & Multithreading**
-    - [ ] Update `resolveCollisions` to consume spatial index results rather than rechecking every shape pair each step.
-    - [ ] Parallelize broad-phase collision generation inside `cpHastySpace` so collision detection scales with worker threads.
-    - [ ] Cache and reuse arbiter/contact data between iterations to avoid recomputing manifolds every frame.
+- [x] **Performance & Multithreading**
+    - [x] Update `resolveCollisions` to consume spatial index results rather than rechecking every shape pair each step.
+    - [x] Parallelize broad-phase collision generation inside `cpHastySpace` so collision detection scales with worker threads.
+    - [x] Cache and reuse arbiter/contact data between iterations to avoid recomputing manifolds every frame.
 
 - [x] **Verification & Testing**
     - [x] Build the cross-implementation harness that runs Zig simulations alongside Chipmunk 7.0.3 for behavioral parity checks.
