@@ -196,6 +196,7 @@ pub const cpHastySpace = struct {
             self.runArbiterPhase();
         }
 
+        space_mod.postSolveArbiters(&self.space);
         space_mod.integratePositions(&self.space, dt);
         space_mod.runConstraintCallback(self.space.constraints.items, dt, dt_coef, .postStep);
         space_mod.runPostSteps(&self.space);

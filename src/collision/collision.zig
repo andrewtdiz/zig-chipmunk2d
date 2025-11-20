@@ -69,6 +69,14 @@ fn cachedCollisionId(cache: *CollisionIdCache, key: PairKey) types.cpCollisionID
     return cache.map.get(key) orelse 0;
 }
 
+fn seedCollisionId(key: PairKey) types.cpCollisionID {
+    const lo: u64 = @intCast(key & 0xFFFFFFFFFFFFFFFF);
+    const hi: u64 = @intCast(key >> 64);
+    const mixed: u128 = key ^ (key >> 32) ^ (key >> 64) ^ (key >> 96) ^ (@as(u128, lo) << 8) ^ (@as(u128, hi) << 4);
+    const seeded: types.cpCollisionID = @truncate(mixed ^ (mixed >> 32));
+    return if (seeded == 0) 1 else seeded;
+}
+
 fn storeCollisionId(cache: *CollisionIdCache, key: PairKey, id: types.cpCollisionID) void {
     if (cache.map.getPtr(key)) |existing| {
         existing.* = id;
@@ -96,6 +104,13 @@ pub const CollisionResult = struct {
     pub fn addContact(self: *CollisionResult, contact: Contact) void {
         _ = self.contacts.append(contact) catch {};
         self.normal = contact.normal;
+    }
+
+    fn bakeIds(self: *CollisionResult, collision_id: types.cpCollisionID) void {
+        self.id = collision_id;
+        for (self.contacts.slice()) |*contact| {
+            contact.hash = hashPair(collision_id, contact.hash);
+        }
     }
 
     pub fn contactCount(self: CollisionResult) usize {
@@ -674,7 +689,18 @@ fn collideWithId(a: *const shape_base.cpShape, b: *const shape_base.cpShape, id:
 pub fn collide(cache: *CollisionIdCache, a: *const shape_base.cpShape, b: *const shape_base.cpShape) CollisionResult {
     const key = pairKey(a, b);
     var id = cachedCollisionId(cache, key);
-    const result = collideWithId(a, b, &id);
+    if (id == 0) {
+        id = seedCollisionId(key);
+    }
+
+    var result = collideWithId(a, b, &id);
+    if (result.id == 0) {
+        result.bakeIds(id);
+    } else {
+        id = result.id;
+        result.bakeIds(id);
+    }
+
     storeCollisionId(cache, key, id);
     return result;
 }

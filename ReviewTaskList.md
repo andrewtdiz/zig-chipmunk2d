@@ -4,11 +4,11 @@ This document captures the open work items identified across the combined migrat
 
 ## Task Checklist
 
-- [ ] **Collision & Narrow-Phase Restoration**
+- [x] **Collision & Narrow-Phase Restoration**
     - [x] Port the full Chipmunk GJK/EPA path plus `ClosestPointsNew`/contact clipping so segment–segment and segment–poly pairs emit multi-contact manifolds with correct normals.
-    - [ ] Reintroduce cached collision IDs tied to the space allocator and ensure per-contact data feeds arbiters for persistence/warm-starting.
+    - [x] Reintroduce cached collision IDs tied to the space allocator and ensure per-contact data feeds arbiters for persistence/warm-starting.
     - [x] Move polygon scratch allocations off `std.heap.page_allocator` and into the layered allocator strategy owned by each `cpSpace`.
-    - [ ] Reorder `postSolve` so callbacks execute after solver iterations with access to final impulses.
+    - [x] Reorder `postSolve` so callbacks execute after solver iterations with access to final impulses.
 
 - [ ] **Spatial Indexing & cpSpace Lifecycle**
     - [ ] Finish porting `cpSpaceHash`, `cpSweep1D`, `space_step.zig`, and `space_query.zig` so the broad phase no longer double-loops over every shape pair and segment queries are exposed.
