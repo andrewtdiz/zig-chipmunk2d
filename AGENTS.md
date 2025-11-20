@@ -126,24 +126,3 @@ pub fn main() !void {
     try list.append(allocator, 42);
 }
 ```
-
-## Verify Zig APIs with `zigdoc`
-
-Zig's standard library APIs change frequently. Do not rely on prior knowledge. **Use the `zigdoc` CLI to verify Zig APIs.**
-
-### `zigdoc` Usage
-
-`zigdoc` provides documentation for Zig standard library `std`.
-
-```
-zigdoc [options] <symbol>
-```
-
-Examples:
-
-```
-zigdoc std.ArrayList
-zigdoc std.mem.Allocator
-zigdoc std.http.Server
-zigdoc std.fs.Dir.readFileAlloc
-```

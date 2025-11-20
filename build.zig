@@ -69,13 +69,17 @@ fn addChipmunkCLibrary(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) *std.Build.Step.Compile {
-    const lib = b.addStaticLibrary(.{
-        .name = "chipmunk_c",
+    const root_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
     });
 
-    lib.addIncludePath(b.path("chipmunk2d/include"));
+    const lib = b.addLibrary(.{
+        .name = "chipmunk_c",
+        .root_module = root_module,
+    });
+
+    root_module.addIncludePath(b.path("chipmunk2d/include"));
     lib.addCSourceFiles(.{
         .files = &.{
             "chipmunk2d/src/chipmunk.c",
@@ -113,7 +117,6 @@ fn addChipmunkCLibrary(
         .flags = &.{"-std=gnu99"},
     });
     lib.linkLibC();
-    lib.linkLibMath();
 
     return lib;
 }

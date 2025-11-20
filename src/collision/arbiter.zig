@@ -160,7 +160,7 @@ pub const cpArbiter = struct {
             // Bias impulse to correct penetration drift.
             const vb = relativeBiasVelocity(body_a, body_b, contact.r1, contact.r2);
             const vbn = vect.cpvdot(vb, normal);
-            var jbn = (contact.bias - vbn) * contact.n_mass;
+            const jbn = (contact.bias - vbn) * contact.n_mass;
             contact.jbias_acc += jbn;
             applyBiasImpulse(body_a, body_b, normal, contact.r1, contact.r2, jbn);
 
