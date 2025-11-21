@@ -1,28 +1,11 @@
-# Zig Chipmunk2D Port Parity Concerns
+# Chipmunk2D Parity Concerns
 
-- Mass/area helpers diverge from the C reference:
-  - `src/space/body.zig:105-107` computes segment inertia as `length_sq/12 + r^2/2`, dropping the center-offset term and box approximation used in `chipmunk2d/src/chipmunk.c:76-83`, so rounded segments get under-estimated inertia.
-  - `src/shape/shape_base.zig:56-77` omits `cpfabs` for circle annulus area and removes the radius/perimeter term from polygon area that `chipmunk2d/src/chipmunk.c:70-127` uses; polygon area also ignores the radius parameter entirely, changing mass/density calculations.
-  - `src/shape/shape_base.zig:99-119` adds a `mass * radius^2` term and lacks the 2-vertex fallback present in `chipmunk2d/src/chipmunk.c:92-111`, so polygon inertia and thin-segment handling no longer match.
-  - `src/space/body.zig:114-116` changes the `cpMomentForBox2` API to require precomputed width/height/offset instead of accepting a `cpBB` like the C API (see `chipmunk2d/src/chipmunk.c` right after the poly helpers), breaking 1:1 API parity described in the docs.
-
-- Shape feature gaps relative to C structs:
-  - `src/shape/shape_base.zig:27-37` has no mass info, density, or cached area/moment fields (C keeps `cpShapeMassInfo` on cpShape), so APIs like `cpShapeSetMass/SetDensity` and `cacheData` hooks are missing.
-  - `src/shape/poly.zig` stores only raw vertices and radius; it lacks splitting planes, bevel data, and convex-hull helpers (`cpLoopIndexes`, QuickHull, `cpConvexHull` from `chipmunk2d/src/chipmunk.c:158-260`), so polygon validation/hull building and beveled edge support are absent. `src/shape/segment.zig` similarly omits neighbor tangents (`cpSegmentShapeSetNeighbors`) used for smooth joins.
-
-- Simulation pipeline ordering differs:
-  - Chipmunk’s documented `cpSpaceStep` integrates positions, runs broad/narrow phase, processes components, pre-steps constraints, integrates velocities, iterates the solver, then fires post-solve callbacks.
-  - The Zig stepper updates velocities before broad-phase work, skips component processing, and defers position integration until after post-solve/separation, which can alter contact persistence, sleep timing, and constraint biasing.
-
-- Sleeping and component processing are simplified:
-  - Chipmunk sleeps/wakes whole islands via `cpSpaceProcessComponents`; the Zig port only evaluates per-body kinetic energy (`src/space/space_step.zig:156-171`), so constraint-linked bodies can diverge.
-  - Bodies do not track arbiter/shape/constraint lists like `cpBody` in C, and the stepper omits `cpSpaceFilterArbiters`-style safe removal, so callback ordering/removal semantics differ.
-
-- Arbiter caching and allocations:
-  - Collision/arbiter caching uses hash maps and fresh array appends each step (`src/space/space_step.zig:98-111`, `src/space/space_step.zig:199-219`) instead of the contact-buffer ring and pooled arbiters in C, increasing per-frame allocation and cache churn risk.
-
-- Multithreaded broad-phase throughput:
-  - `src/extras/hasty_space.zig` parallelizes `resolveCollisionsRange`, but each query path grabs a mutex around collision resolution, arbiter lookup, and handler callbacks; that shared lock serializes narrow-phase/arbiter append work, limiting the throughput gains Chipmunk’s hasty space design aims for.
-
-- Missing diagnostics/version surface:
-  - There is no `cpMessage`/version string equivalent from `chipmunk2d/src/chipmunk.c:33-58`, so documented error reporting and version queries are unavailable in the Zig port.
+- `cpAreaForPoly` returns `0.0` for polygons with fewer than three vertices (`src/shape/shape_base.zig:115`), while `chipmunk.c` still accounts for perimeter/radius for 2‑vertex cases. Any degenerate poly that reuses segment math now reports zero area and mass, diverging from upstream behavior.
+- Collision handlers are selected by single collision type only and ignore type pairs (`src/space/space.zig:635-640`). Chipmunk caches handlers keyed by `(a.type, b.type)` with wildcard matching; pair-specific handlers and proper precedence are missing here.
+- `separate` callbacks fire every step for still-colliding pairs (`src/space/space_step.zig:252-257`) instead of only when contacts are removed. This triggers user “separation” logic continuously, which is not Chipmunk semantics.
+- Sleeping ignores idle timing: `processComponents` immediately sets `body.sleeping` based on instantaneous energy (`src/space/space_step.zig:174-203`), and the idle-stamp-based sleep path (`updateSleepStates`, `src/space/space_step.zig:277-292`) is never used. Chipmunk waits for sustained low energy (`sleepTimeThreshold`/`idleSpeedThreshold`) before sleeping components.
+- Contact persistence is dropped after a single missed frame: `pruneArbiterCache` evicts cached arbiters whenever they were not touched this step (`src/space/space_step.zig:320-339`). Chipmunk keeps arbiters alive for `collisionPersistence` frames to warm start contacts; losing them each frame hurts stability and performance.
+- Collision slop and bias are hard-coded (`COLLISION_SLOP = 0.01`, `biasCoefficient(0.1, dt)` at `src/collision/arbiter.zig:8,110-135`) with no space-level configuration. Chipmunk exposes `collisionSlop`/`collisionBias` fields and defaults to a larger slop (0.1) and bias matching `pow(0.9, 60)`.
+- Component/sleep processing allocates fresh hash maps and arrays every step (`src/space/space_step.zig:148-189`) instead of reusing pooled storage like Chipmunk’s contact buffer ring and component graph, increasing allocator churn and deviating from the pooled design.
+- Objective-C block helpers (`cpSpaceEachBody_b`, `cpSpacePointQuery_b`, etc.) that live in `chipmunk.c` are absent from the Zig surface, so the API is not a 1-for-1 port for those entry points.
+- `cpMessage` ignores the `is_hard_error` flag and only prints (no Android logging hooks) (`src/core/types.zig:93-99`); Chipmunk escalates hard errors and integrates platform logging.
