@@ -5,6 +5,7 @@ const vect = @import("../core/vect.zig");
 const shape_base = @import("../shape/shape_base.zig");
 const collision = @import("../collision/collision.zig");
 const arbiter = @import("../collision/arbiter.zig");
+const body_mod = @import("body.zig");
 
 pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
     return struct {
@@ -12,17 +13,26 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
         const CachedArbiter = @TypeOf(@as(*Space, undefined).arbiter_cache).Value;
 
         pub fn step(space: *Space, dt: types.cpFloat) void {
+            if (dt == 0.0) return;
+
+            space.prev_dt = space.curr_dt;
+            space.curr_dt = dt;
             space.stamp +%= 1;
-            const dt_coef: types.cpFloat = if (dt != 0.0) dt else 1.0;
-            updateVelocities(space, dt);
-            runConstraintCallback(space, dt, dt_coef, .preStep);
-            runConstraintCallback(space, dt, dt_coef, .applyCachedImpulse);
+
+            const dt_coef: types.cpFloat = if (space.prev_dt != 0.0) dt / space.prev_dt else 0.0;
+
             recycleArbiters(space);
+            integratePositions(space, dt);
             cacheAllShapes(space);
             space.dynamic_index.reindex() catch {};
             broadPhase(space);
+            processComponents(space, dt);
+
             preStepArbiters(space, dt);
+            runConstraintCallback(space, dt, dt_coef, .preStep);
+            updateVelocities(space, dt);
             applyCachedArbiterImpulses(space, dt_coef);
+            runConstraintCallback(space, dt, dt_coef, .applyCachedImpulse);
 
             var iteration: usize = 0;
             while (iteration < space.iterations) : (iteration += 1) {
@@ -30,11 +40,9 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
                 resolveArbiters(space);
             }
 
+            runConstraintCallback(space, dt, dt_coef, .postStep);
             runPostSolve(space);
             runSeparations(space);
-            integratePositions(space, dt);
-            updateSleepStates(space);
-            runConstraintCallback(space, dt, dt_coef, .postStep);
             runPostSteps(space);
             syncArbiterCache(space);
             pruneArbiterCache(space);
@@ -54,9 +62,10 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
         }
 
         fn updateVelocities(space: *Space, dt: types.cpFloat) void {
+            const damping_factor = std.math.pow(types.cpFloat, space.damping, dt);
             for (space.bodies.items) |body| {
                 if (body.sleeping) continue;
-                body.updateVelocity(space.gravity, space.damping, dt);
+                body.updateVelocity(space.gravity, damping_factor, dt);
             }
         }
 
@@ -79,6 +88,118 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
                 space.dynamic_index.query(shape.bbValue(), queryPairs, &ctx);
                 ctx.static_query = true;
                 space.static_index.query(shape.bbValue(), queryPairs, &ctx);
+            }
+        }
+
+        pub fn processComponents(space: *Space, dt: types.cpFloat) void {
+            _ = dt;
+
+            var index_map = std.AutoHashMap(*body_mod.cpBody, usize).init(space.allocator);
+            defer index_map.deinit();
+
+            var parents = std.ArrayList(usize).init(space.allocator);
+            defer parents.deinit();
+            var ranks = std.ArrayList(u8).init(space.allocator);
+            defer ranks.deinit();
+            var anchored = std.ArrayList(bool).init(space.allocator);
+            defer anchored.deinit();
+
+            for (space.bodies.items) |body| {
+                if (body.body_type != .dynamic) continue;
+                parents.append(space.allocator, parents.items.len) catch {};
+                ranks.append(space.allocator, 0) catch {};
+                anchored.append(space.allocator, false) catch {};
+                index_map.put(space.allocator, body, parents.items.len - 1) catch {};
+            }
+
+            const unionFind = struct {
+                parents: []usize,
+                ranks: []u8,
+                fn find(self: @This(), idx: usize) usize {
+                    var i = idx;
+                    while (self.parents[i] != i) {
+                        self.parents[i] = self.parents[self.parents[i]];
+                        i = self.parents[i];
+                    }
+                    return i;
+                }
+                fn unite(self: @This(), a: usize, b: usize) void {
+                    const ra = self.find(a);
+                    const rb = self.find(b);
+                    if (ra == rb) return;
+                    if (self.ranks[ra] < self.ranks[rb]) {
+                        self.parents[ra] = rb;
+                    } else if (self.ranks[ra] > self.ranks[rb]) {
+                        self.parents[rb] = ra;
+                    } else {
+                        self.parents[rb] = ra;
+                        self.ranks[ra] += 1;
+                    }
+                }
+            }{ .parents = parents.items, .ranks = ranks.items };
+
+            // Union bodies connected via arbiters and constraints.
+            for (space.arbiters.items) |arb_ref| {
+                const a_body = arb_ref.shape_a.body;
+                const b_body = arb_ref.shape_b.body;
+                const a_dyn = a_body.body_type == .dynamic;
+                const b_dyn = b_body.body_type == .dynamic;
+                const a_idx = if (a_dyn) index_map.get(a_body) else null;
+                const b_idx = if (b_dyn) index_map.get(b_body) else null;
+                if (a_dyn and b_dyn and a_idx != null and b_idx != null) {
+                    unionFind.unite(a_idx.?, b_idx.?);
+                } else if (a_dyn and a_idx != null) {
+                    anchored.items[a_idx.?] = true;
+                } else if (b_dyn and b_idx != null) {
+                    anchored.items[b_idx.?] = true;
+                }
+            }
+
+            for (space.constraints.items) |entry| {
+                const a_body = entry.constraint.a;
+                const b_body = entry.constraint.b;
+                const a_dyn = a_body.body_type == .dynamic;
+                const b_dyn = b_body.body_type == .dynamic;
+                const a_idx = if (a_dyn) index_map.get(a_body) else null;
+                const b_idx = if (b_dyn) index_map.get(b_body) else null;
+                if (a_dyn and b_dyn and a_idx != null and b_idx != null) {
+                    unionFind.unite(a_idx.?, b_idx.?);
+                } else if (a_dyn and a_idx != null) {
+                    anchored.items[a_idx.?] = true;
+                } else if (b_dyn and b_idx != null) {
+                    anchored.items[b_idx.?] = true;
+                }
+            }
+
+            var component_energy = std.ArrayList(types.cpFloat).init(space.allocator);
+            defer component_energy.deinit();
+            var component_anchored = std.ArrayList(bool).init(space.allocator);
+            defer component_anchored.deinit();
+            component_energy.resize(parents.items.len) catch {};
+            component_anchored.resize(parents.items.len) catch {};
+            @memset(component_energy.items, 0.0);
+            @memset(component_anchored.items, false);
+
+            for (space.bodies.items) |body| {
+                if (body.body_type != .dynamic) continue;
+                const idx = index_map.get(body) orelse continue;
+                const root = unionFind.find(idx);
+                component_energy.items[root] += body.kineticEnergy();
+                component_anchored.items[root] = component_anchored.items[root] or anchored.items[idx];
+            }
+
+            for (space.bodies.items) |body| {
+                if (body.body_type != .dynamic) continue;
+                const idx = index_map.get(body) orelse continue;
+                const root = unionFind.find(idx);
+                const should_sleep = !component_anchored.items[root] and component_energy.items[root] < space.sleep_energy_threshold;
+                body.sleeping = should_sleep;
+                if (should_sleep) {
+                    body.v = vect.cpvzero;
+                    body.w = 0.0;
+                    body.v_bias = vect.cpvzero;
+                    body.w_bias = 0.0;
+                }
             }
         }
 
@@ -184,6 +305,14 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
             return space.handler;
         }
 
+        fn makePairKey(a: *const shape_base.cpShape, b: *const shape_base.cpShape) u128 {
+            const first = @intFromPtr(a);
+            const second = @intFromPtr(b);
+            const min_ptr = @min(first, second);
+            const max_ptr = @max(first, second);
+            return (@as(u128, min_ptr) << 64) | @as(u128, max_ptr);
+        }
+
         fn fetchArbiter(space: *Space, a: *shape_base.cpShape, b: *shape_base.cpShape) ?*CachedArbiter {
             const key = makePairKey(a, b);
             var gop = space.arbiter_cache.getOrPut(key) catch return null;
@@ -204,7 +333,7 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
             while (it.next()) |entry| {
                 if (entry.value_ptr.stamp != space.stamp) {
                     stale_keys.append(space.allocator, entry.key_ptr.*) catch {};
-            }
+                }
             }
 
             for (stale_keys.items) |key| {
@@ -217,14 +346,6 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
                     stashArbiter(space, cached.value);
                 }
             }
-        }
-
-        fn makePairKey(a: *const shape_base.cpShape, b: *const shape_base.cpShape) u128 {
-            const first = @intFromPtr(a);
-            const second = @intFromPtr(b);
-            const min_ptr = @min(first, second);
-            const max_ptr = @max(first, second);
-            return (@as(u128, min_ptr) << 64) | @as(u128, max_ptr);
         }
 
         fn recycleArbiters(space: *Space) void {

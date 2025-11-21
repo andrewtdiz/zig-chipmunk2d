@@ -137,11 +137,19 @@ fn executeJob(job: Job) void {
             );
         },
         .arbiter => |payload| {
-            space_mod.resolveArbitersRange(payload.space, job.start, job.end);
+            applyArbiterImpulsesRange(payload.space, job.start, job.end);
         },
         .broad_phase => |payload| {
             space_mod.resolveCollisionsRange(payload.space, job.start, job.end, payload.mutex);
         },
+    }
+}
+
+fn applyArbiterImpulsesRange(space: *space_mod.cpSpace, start: usize, end: usize) void {
+    var idx = start;
+    while (idx < end) : (idx += 1) {
+        var arb_ptr = &space.arbiters.items[idx];
+        arb_ptr.applyImpulse();
     }
 }
 
@@ -193,12 +201,15 @@ pub const cpHastySpace = struct {
     }
 
     pub fn step(self: *cpHastySpace, dt: types.cpFloat) void {
-        const dt_coef: types.cpFloat = if (dt != 0.0) dt else 1.0;
-        space_mod.startBroadPhase(&self.space);
-        space_mod.updateVelocities(&self.space, dt);
-        space_mod.runConstraintCallback(self.space.constraints.items, dt, dt_coef, .preStep);
-        space_mod.runConstraintCallback(self.space.constraints.items, dt, dt_coef, .applyCachedImpulse);
+        if (dt == 0.0) return;
+
+        self.space.prev_dt = self.space.curr_dt;
+        self.space.curr_dt = dt;
+        const dt_coef: types.cpFloat = if (self.space.prev_dt != 0.0) dt / self.space.prev_dt else 0.0;
+
+        space_mod.integratePositions(&self.space, dt);
         space_mod.updateShapeCaches(&self.space);
+        space_mod.startBroadPhase(&self.space);
 
         const dynamic_len = self.space.dynamic_shapes.items.len;
         if (self.workers.len == 0 or dynamic_len < self.parallel_threshold) {
@@ -208,6 +219,13 @@ pub const cpHastySpace = struct {
             self.dispatchJobs(payload, dynamic_len);
         }
 
+        space_mod.processComponents(&self.space, dt);
+        space_mod.preStepArbiters(&self.space, dt);
+        space_mod.runConstraintCallback(self.space.constraints.items, dt, dt_coef, .preStep);
+        space_mod.updateVelocities(&self.space, dt);
+        space_mod.applyCachedArbiterImpulses(&self.space, dt_coef);
+        space_mod.runConstraintCallback(self.space.constraints.items, dt, dt_coef, .applyCachedImpulse);
+
         var iteration: usize = 0;
         while (iteration < self.space.iterations) : (iteration += 1) {
             self.runConstraintPhase(.applyImpulse, dt, dt_coef);
@@ -215,7 +233,6 @@ pub const cpHastySpace = struct {
         }
 
         space_mod.postSolveArbiters(&self.space);
-        space_mod.integratePositions(&self.space, dt);
         space_mod.runConstraintCallback(self.space.constraints.items, dt, dt_coef, .postStep);
         space_mod.runPostSteps(&self.space);
         space_mod.finishBroadPhase(&self.space);
@@ -271,7 +288,7 @@ pub const cpHastySpace = struct {
         const arb_len = self.space.arbiters.items.len;
         if (arb_len == 0) return;
         if (self.workers.len == 0 or arb_len < self.parallel_threshold) {
-            space_mod.resolveArbiters(&self.space);
+            applyArbiterImpulsesRange(&self.space, 0, arb_len);
             return;
         }
 

@@ -103,17 +103,20 @@ pub fn cpMomentForCircle(mass: types.cpFloat, inner_radius: types.cpFloat, outer
 }
 
 pub fn cpMomentForSegment(mass: types.cpFloat, a: vect.cpVect, b: vect.cpVect, radius: types.cpFloat) types.cpFloat {
-    const length_sq = vect.cpvdistsq(a, b);
-    return mass * (length_sq / 12.0 + radius * radius * 0.5);
+    const offset = vect.cpvlerp(a, b, 0.5);
+    const length = vect.cpvdist(a, b) + 2.0 * radius;
+    return mass * ((length * length + 4.0 * radius * radius) / 12.0 + vect.cpvlengthsq(offset));
 }
 
 pub fn cpMomentForBox(mass: types.cpFloat, width: types.cpFloat, height: types.cpFloat) types.cpFloat {
     return mass * (width * width + height * height) / 12.0;
 }
 
-pub fn cpMomentForBox2(mass: types.cpFloat, bounds: struct { width: types.cpFloat, height: types.cpFloat, offset: vect.cpVect }) types.cpFloat {
-    const base = cpMomentForBox(mass, bounds.width, bounds.height);
-    return base + mass * vect.cpvlengthsq(bounds.offset);
+pub fn cpMomentForBox2(mass: types.cpFloat, bounds: @import("../core/bb.zig").cpBB) types.cpFloat {
+    const width = bounds.r - bounds.l;
+    const height = bounds.t - bounds.b;
+    const offset = vect.cpvmult(vect.cpv(bounds.l + bounds.r, bounds.b + bounds.t), 0.5);
+    return cpMomentForBox(mass, width, height) + mass * vect.cpvlengthsq(offset);
 }
 
 test "cpBody integration" {

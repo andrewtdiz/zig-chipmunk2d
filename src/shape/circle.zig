@@ -12,6 +12,7 @@ pub const cpCircleShape = struct {
 
     pub fn init(body: *body_mod.cpBody, radius: types.cpFloat, offset: vect.cpVect) cpCircleShape {
         var shape = cpCircleShape{ .base = shape_base.cpShape.init(.circle, body), .radius = radius, .offset = offset };
+        shape.base.setMassInfo(shape_base.cpShapeMassInfoForCircle(0.0, 0.0, radius, offset));
         shape.cacheBB();
         return shape;
     }

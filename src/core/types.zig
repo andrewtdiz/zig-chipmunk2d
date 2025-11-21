@@ -13,6 +13,10 @@ pub const cpTimestamp = u32;
 pub const CP_NO_GROUP: cpGroup = 0;
 pub const CP_ALL_CATEGORIES: cpBitmask = ~@as(cpBitmask, 0);
 pub const CP_WILDCARD_COLLISION_TYPE: cpCollisionType = ~@as(cpCollisionType, 0);
+pub const CP_VERSION_MAJOR: u32 = 7;
+pub const CP_VERSION_MINOR: u32 = 0;
+pub const CP_VERSION_RELEASE: u32 = 3;
+pub const cpVersionString = "7.0.3";
 
 pub const CP_PI: cpFloat = 3.14159265358979323846264338327950288;
 pub const CP_INFINITY: cpFloat = std.math.inf(cpFloat);
@@ -84,6 +88,15 @@ pub inline fn cpffloor(value: cpFloat) cpFloat {
 
 pub inline fn cpfceil(value: cpFloat) cpFloat {
     return std.math.ceil(value);
+}
+
+pub fn cpMessage(condition: []const u8, file: []const u8, line: u32, is_error: bool, is_hard_error: bool, comptime fmt: []const u8, args: anytype) void {
+    _ = is_hard_error;
+    const stderr = std.io.getStdErr().writer();
+    const prefix = if (is_error) "Aborting due to Chipmunk error: " else "Chipmunk warning: ";
+    stderr.print("{s}", .{prefix}) catch return;
+    stderr.print(fmt, args) catch return;
+    stderr.print("\n\tFailed condition: {s}\n\tSource:{s}:{d}\n", .{ condition, file, line }) catch {};
 }
 
 test "cpFloat helpers" {

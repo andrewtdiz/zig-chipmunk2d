@@ -12,6 +12,7 @@ pub const cpPolyShape = struct {
 
     pub fn init(body: *body_mod.cpBody, vertices: []const vect.cpVect, radius: types.cpFloat) cpPolyShape {
         var shape = cpPolyShape{ .base = shape_base.cpShape.init(.poly, body), .vertices = vertices, .radius = radius };
+        shape.base.setMassInfo(shape_base.cpShapeMassInfoForPoly(0.0, vertices, vect.cpvzero, radius));
         shape.cacheBB();
         return shape;
     }
@@ -39,7 +40,7 @@ pub const cpPolyShape = struct {
     }
 
     pub fn area(self: cpPolyShape) types.cpFloat {
-        return shape_base.cpAreaForPoly(self.vertices);
+        return shape_base.cpAreaForPoly(self.vertices, self.radius);
     }
 };
 

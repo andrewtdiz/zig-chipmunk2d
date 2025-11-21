@@ -11,11 +11,14 @@ pub const cpSegmentShape = struct {
     b: vect.cpVect,
     normal: vect.cpVect,
     radius: types.cpFloat,
+    a_tangent: vect.cpVect = vect.cpvzero,
+    b_tangent: vect.cpVect = vect.cpvzero,
 
     pub fn init(body: *body_mod.cpBody, a: vect.cpVect, b: vect.cpVect, radius: types.cpFloat) cpSegmentShape {
         const delta = vect.cpvsub(b, a);
         const normal = vect.cpvnormalize(vect.cpvperp(delta));
         var shape = cpSegmentShape{ .base = shape_base.cpShape.init(.segment, body), .a = a, .b = b, .normal = normal, .radius = radius };
+        shape.base.setMassInfo(shape_base.cpShapeMassInfoForSegment(0.0, a, b, radius));
         shape.cacheBB();
         return shape;
     }
@@ -31,6 +34,11 @@ pub const cpSegmentShape = struct {
             types.cpfmax(ta.y, tb.y) + self.radius,
         );
         self.base.setBB(bounds);
+    }
+
+    pub fn setNeighbors(self: *cpSegmentShape, a_tangent: vect.cpVect, b_tangent: vect.cpVect) void {
+        self.a_tangent = a_tangent;
+        self.b_tangent = b_tangent;
     }
 };
 

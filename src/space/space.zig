@@ -205,6 +205,8 @@ pub const cpSpace = struct {
     damping: types.cpFloat = 1.0,
     iterations: usize = 10,
     stamp: u64 = 0,
+    prev_dt: types.cpFloat = 0.0,
+    curr_dt: types.cpFloat = 0.0,
     sleep_energy_threshold: types.cpFloat = 0.01,
     sleep_delay: u64 = 20,
 
@@ -272,6 +274,22 @@ pub const cpSpace = struct {
 
     pub fn removeBody(self: *cpSpace, body: *body_mod.cpBody) void {
         removePtr(*body_mod.cpBody, &self.bodies, body);
+        filterArbitersWithBody(self, body);
+        var i: usize = 0;
+        while (i < self.shapes.items.len) : (i += 1) {
+            const shape = self.shapes.items[i];
+            if (shape.body == body) {
+                self.removeShape(shape);
+                if (i > 0) i -= 1;
+            }
+        }
+        var c: usize = 0;
+        while (c < self.constraints.items.len) : (c += 1) {
+            if (self.constraints.items[c].constraint.a == body or self.constraints.items[c].constraint.b == body) {
+                _ = self.constraints.orderedRemove(c);
+                c -= 1;
+            }
+        }
     }
 
     pub fn addShape(self: *cpSpace, shape: *shape_base.cpShape) !void {
@@ -294,6 +312,7 @@ pub const cpSpace = struct {
         removePtr(*shape_base.cpShape, &self.shapes, shape);
         const ptr = @as(*const anyopaque, @ptrCast(shape));
         self.collision_cache.removeShape(shape);
+        filterArbitersWithShape(self, shape);
         switch (shape.body.body_type) {
             .static => {
                 removePtr(*shape_base.cpShape, &self.static_shapes, shape);
@@ -481,13 +500,16 @@ pub fn runConstraintCallbackRange(
 }
 
 pub fn updateVelocities(space: *cpSpace, dt: types.cpFloat) void {
+    const damping_factor = std.math.pow(types.cpFloat, space.damping, dt);
     for (space.bodies.items) |body| {
-        body.updateVelocity(space.gravity, space.damping, dt);
+        if (body.sleeping) continue;
+        body.updateVelocity(space.gravity, damping_factor, dt);
     }
 }
 
 pub fn integratePositions(space: *cpSpace, dt: types.cpFloat) void {
     for (space.bodies.items) |body| {
+        if (body.sleeping) continue;
         body.updatePosition(dt);
     }
 }
@@ -502,6 +524,10 @@ pub fn resolveCollisions(space: *cpSpace) void {
     startBroadPhase(space);
     resolveCollisionsRange(space, 0, space.dynamic_shapes.items.len, null);
     finishBroadPhase(space);
+}
+
+pub fn processComponents(space: *cpSpace, dt: types.cpFloat) void {
+    Stepper.processComponents(space, dt);
 }
 
 pub fn resolveArbiters(space: *cpSpace) void {
@@ -534,6 +560,18 @@ pub fn runPostSteps(space: *cpSpace) void {
         callback.func(space, callback.data);
     }
     space.post_steps.clearRetainingCapacity();
+}
+
+pub fn preStepArbiters(space: *cpSpace, dt: types.cpFloat) void {
+    for (space.arbiters.items) |*arb_ref| {
+        arb_ref.preStep(dt);
+    }
+}
+
+pub fn applyCachedArbiterImpulses(space: *cpSpace, dt_coef: types.cpFloat) void {
+    for (space.arbiters.items) |*arb_ref| {
+        arb_ref.applyCachedImpulse(dt_coef);
+    }
 }
 
 fn cacheShapeInternal(shape: *shape_base.cpShape) void {
@@ -644,6 +682,87 @@ fn pruneArbiterCache(space: *cpSpace) void {
     var it = space.arbiter_cache.iterator();
     while (it.next()) |entry| {
         if (entry.value_ptr.stamp != space.stamp) {
+            stale_keys.append(entry.key_ptr.*) catch {};
+        }
+    }
+
+    for (stale_keys.items) |key| {
+        if (space.arbiter_cache.remove(key)) |cached| {
+            const handler = selectHandler(space, cached.value.shape_a, cached.value.shape_b);
+            if (handler.separate) |sep_func| {
+                var temp = cached.value;
+                sep_func(&temp, space);
+            }
+            stashArbiter(space, cached.value);
+        }
+    }
+}
+
+fn matchesShape(arb_ref: arbiter.cpArbiter, shape: *shape_base.cpShape) bool {
+    return arb_ref.shape_a == shape or arb_ref.shape_b == shape;
+}
+
+fn matchesBody(arb_ref: arbiter.cpArbiter, body: *body_mod.cpBody) bool {
+    return arb_ref.shape_a.body == body or arb_ref.shape_b.body == body;
+}
+
+fn filterArbitersWithShape(space: *cpSpace, shape: *shape_base.cpShape) void {
+    var i: usize = 0;
+    while (i < space.arbiters.items.len) {
+        const handler = selectHandler(space, space.arbiters.items[i].shape_a, space.arbiters.items[i].shape_b);
+        if (matchesShape(space.arbiters.items[i], shape)) {
+            if (handler.separate) |sep_func| {
+                sep_func(&space.arbiters.items[i], space);
+            }
+            _ = space.arbiters.swapRemove(i);
+            continue;
+        }
+        i += 1;
+    }
+
+    var stale_keys = std.ArrayList(u128).init(space.allocator);
+    defer stale_keys.deinit();
+
+    var it = space.arbiter_cache.iterator();
+    while (it.next()) |entry| {
+        if (matchesShape(entry.value_ptr.value, shape)) {
+            stale_keys.append(entry.key_ptr.*) catch {};
+        }
+    }
+
+    for (stale_keys.items) |key| {
+        if (space.arbiter_cache.remove(key)) |cached| {
+            const handler = selectHandler(space, cached.value.shape_a, cached.value.shape_b);
+            if (handler.separate) |sep_func| {
+                var temp = cached.value;
+                sep_func(&temp, space);
+            }
+            stashArbiter(space, cached.value);
+        }
+    }
+}
+
+fn filterArbitersWithBody(space: *cpSpace, body: *body_mod.cpBody) void {
+    var i: usize = 0;
+    while (i < space.arbiters.items.len) {
+        const ar = space.arbiters.items[i];
+        const handler = selectHandler(space, ar.shape_a, ar.shape_b);
+        if (matchesBody(ar, body)) {
+            if (handler.separate) |sep_func| {
+                sep_func(&space.arbiters.items[i], space);
+            }
+            _ = space.arbiters.swapRemove(i);
+            continue;
+        }
+        i += 1;
+    }
+
+    var stale_keys = std.ArrayList(u128).init(space.allocator);
+    defer stale_keys.deinit();
+
+    var it = space.arbiter_cache.iterator();
+    while (it.next()) |entry| {
+        if (matchesBody(entry.value_ptr.value, body)) {
             stale_keys.append(entry.key_ptr.*) catch {};
         }
     }
