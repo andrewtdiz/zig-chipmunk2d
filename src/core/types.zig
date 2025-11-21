@@ -91,12 +91,15 @@ pub inline fn cpfceil(value: cpFloat) cpFloat {
 }
 
 pub fn cpMessage(condition: []const u8, file: []const u8, line: u32, is_error: bool, is_hard_error: bool, comptime fmt: []const u8, args: anytype) void {
-    _ = is_hard_error;
     const stderr = std.io.getStdErr().writer();
     const prefix = if (is_error) "Aborting due to Chipmunk error: " else "Chipmunk warning: ";
     stderr.print("{s}", .{prefix}) catch return;
     stderr.print(fmt, args) catch return;
     stderr.print("\n\tFailed condition: {s}\n\tSource:{s}:{d}\n", .{ condition, file, line }) catch {};
+
+    if (is_hard_error) {
+        @panic("Chipmunk hard error (see stderr for details)");
+    }
 }
 
 test "cpFloat helpers" {

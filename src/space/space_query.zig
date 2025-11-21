@@ -9,32 +9,57 @@ const collision = @import("../collision/collision.zig");
 
 pub fn makeQueryApi(comptime Space: type) type {
     return struct {
-        pub fn pointQuery(space_const: *const Space, point: vect.cpVect, filter: shape_base.cpShapeFilter, func: fn (*shape_base.cpShape, vect.cpVect, types.cpFloat) void) void {
+        pub fn pointQuery(
+            space_const: *const Space,
+            point: vect.cpVect,
+            filter: shape_base.cpShapeFilter,
+            func: fn (*shape_base.cpShape, vect.cpVect, types.cpFloat, ?*anyopaque) void,
+            data: ?*anyopaque,
+        ) void {
             var space = @constCast(space_const);
-            var ctx = PointContext{ .point = point, .filter = filter, .func = func };
+            var ctx = PointContext{ .point = point, .filter = filter, .func = func, .data = data };
             const bounds = bb.cpBBNew(point.x, point.y, point.x, point.y);
             space.dynamic_index.query(bounds, pointCallback, &ctx);
             space.static_index.query(bounds, pointCallback, &ctx);
         }
 
-        pub fn bbQuery(space_const: *const Space, bounds: bb.cpBB, filter: shape_base.cpShapeFilter, func: fn (*shape_base.cpShape) void) void {
+        pub fn bbQuery(
+            space_const: *const Space,
+            bounds: bb.cpBB,
+            filter: shape_base.cpShapeFilter,
+            func: fn (*shape_base.cpShape, ?*anyopaque) void,
+            data: ?*anyopaque,
+        ) void {
             var space = @constCast(space_const);
-            var ctx = BBContext{ .filter = filter, .func = func };
+            var ctx = BBContext{ .filter = filter, .func = func, .data = data };
             space.dynamic_index.query(bounds, bbCallback, &ctx);
             space.static_index.query(bounds, bbCallback, &ctx);
         }
 
-        pub fn segmentQuery(space_const: *const Space, start: vect.cpVect, end: vect.cpVect, radius: types.cpFloat, filter: shape_base.cpShapeFilter, func: fn (*shape_base.cpShape, vect.cpVect, vect.cpVect, types.cpFloat) void) void {
+        pub fn segmentQuery(
+            space_const: *const Space,
+            start: vect.cpVect,
+            end: vect.cpVect,
+            radius: types.cpFloat,
+            filter: shape_base.cpShapeFilter,
+            func: fn (*shape_base.cpShape, vect.cpVect, vect.cpVect, types.cpFloat, ?*anyopaque) void,
+            data: ?*anyopaque,
+        ) void {
             var space = @constCast(space_const);
-            var ctx = SegmentContext{ .start = start, .end = end, .radius = radius, .filter = filter, .func = func };
+            var ctx = SegmentContext{ .start = start, .end = end, .radius = radius, .filter = filter, .func = func, .data = data };
             const bounds = segmentBounds(start, end, radius);
             space.dynamic_index.query(bounds, segmentCallback, &ctx);
             space.static_index.query(bounds, segmentCallback, &ctx);
         }
 
-        pub fn shapeQuery(space_const: *const Space, target: *shape_base.cpShape, func: fn (*shape_base.cpShape, collision.CollisionResult) void) void {
+        pub fn shapeQuery(
+            space_const: *const Space,
+            target: *shape_base.cpShape,
+            func: fn (*shape_base.cpShape, collision.CollisionResult, ?*anyopaque) void,
+            data: ?*anyopaque,
+        ) void {
             var space = @constCast(space_const);
-            var ctx = ShapeContext{ .target = target, .func = func, .cache = &space.collision_cache };
+            var ctx = ShapeContext{ .target = target, .func = func, .cache = &space.collision_cache, .data = data };
             const bounds = target.bbValue();
             space.dynamic_index.query(bounds, shapeCallback, &ctx);
             space.static_index.query(bounds, shapeCallback, &ctx);
@@ -43,12 +68,14 @@ pub fn makeQueryApi(comptime Space: type) type {
         const PointContext = struct {
             point: vect.cpVect,
             filter: shape_base.cpShapeFilter,
-            func: fn (*shape_base.cpShape, vect.cpVect, types.cpFloat) void,
+            func: fn (*shape_base.cpShape, vect.cpVect, types.cpFloat, ?*anyopaque) void,
+            data: ?*anyopaque,
         };
 
         const BBContext = struct {
             filter: shape_base.cpShapeFilter,
-            func: fn (*shape_base.cpShape) void,
+            func: fn (*shape_base.cpShape, ?*anyopaque) void,
+            data: ?*anyopaque,
         };
 
         const SegmentContext = struct {
@@ -56,13 +83,15 @@ pub fn makeQueryApi(comptime Space: type) type {
             end: vect.cpVect,
             radius: types.cpFloat,
             filter: shape_base.cpShapeFilter,
-            func: fn (*shape_base.cpShape, vect.cpVect, vect.cpVect, types.cpFloat) void,
+            func: fn (*shape_base.cpShape, vect.cpVect, vect.cpVect, types.cpFloat, ?*anyopaque) void,
+            data: ?*anyopaque,
         };
 
         const ShapeContext = struct {
             target: *shape_base.cpShape,
-            func: fn (*shape_base.cpShape, collision.CollisionResult) void,
+            func: fn (*shape_base.cpShape, collision.CollisionResult, ?*anyopaque) void,
             cache: *collision.CollisionIdCache,
+            data: ?*anyopaque,
         };
 
         fn pointCallback(object: *const anyopaque, _: bb.cpBB, ctx_ptr: ?*anyopaque) void {
@@ -71,7 +100,7 @@ pub fn makeQueryApi(comptime Space: type) type {
             if (shape_base.cpShapeFilter.reject(shape.filter, ctx.filter)) return;
             const info = pointInfo(shape, ctx.point);
             if (info.distance <= 0.0) {
-                ctx.func(shape, ctx.point, info.distance);
+                ctx.func(shape, ctx.point, info.distance, ctx.data);
             }
         }
 
@@ -80,7 +109,7 @@ pub fn makeQueryApi(comptime Space: type) type {
             const shape = @as(*shape_base.cpShape, @ptrCast(object));
             if (shape_base.cpShapeFilter.reject(shape.filter, ctx.filter)) return;
             if (bb.cpBBIntersects(shape.bbValue(), object_bounds)) {
-                ctx.func(shape);
+                ctx.func(shape, ctx.data);
             }
         }
 
@@ -89,7 +118,7 @@ pub fn makeQueryApi(comptime Space: type) type {
             const shape = @as(*shape_base.cpShape, @ptrCast(object));
             if (shape_base.cpShapeFilter.reject(shape.filter, ctx.filter)) return;
             if (segmentHit(shape, ctx.start, ctx.end, ctx.radius)) |hit| {
-                ctx.func(shape, hit.point, hit.normal, hit.alpha);
+                ctx.func(shape, hit.point, hit.normal, hit.alpha, ctx.data);
             }
         }
 
@@ -99,7 +128,7 @@ pub fn makeQueryApi(comptime Space: type) type {
             if (shape == ctx.target) return;
             const result = collision.collide(ctx.cache, ctx.target, shape);
             if (result.contactCount() > 0) {
-                ctx.func(shape, result);
+                ctx.func(shape, result, ctx.data);
             }
         }
 
