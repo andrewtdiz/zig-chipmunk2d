@@ -9,6 +9,8 @@ pub const cpConstraint = struct {
     error_bias: types.cpFloat = 0.0,
     max_bias: types.cpFloat = types.CP_INFINITY,
     user_data: types.cpDataPointer = null,
+    next_a: ?*cpConstraint = null,
+    next_b: ?*cpConstraint = null,
 
     pub fn init(a: *body_mod.cpBody, b: *body_mod.cpBody) cpConstraint {
         return .{ .a = a, .b = b, .error_bias = 0.1 };
@@ -30,6 +32,25 @@ pub const cpConstraint = struct {
 
     pub fn applyImpulse(self: *cpConstraint) void {
         _ = self;
+    }
+
+    pub fn nextForBody(self: *cpConstraint, body: *body_mod.cpBody) ?*cpConstraint {
+        std.debug.assert(self.a == body or self.b == body);
+        return if (self.a == body) self.next_a else self.next_b;
+    }
+
+    pub fn nextPtrForBody(self: *cpConstraint, body: *body_mod.cpBody) *?*cpConstraint {
+        std.debug.assert(self.a == body or self.b == body);
+        return if (self.a == body) &self.next_a else &self.next_b;
+    }
+
+    pub fn setNextForBody(self: *cpConstraint, body: *body_mod.cpBody, next: ?*cpConstraint) void {
+        std.debug.assert(self.a == body or self.b == body);
+        if (self.a == body) {
+            self.next_a = next;
+        } else {
+            self.next_b = next;
+        }
     }
 };
 

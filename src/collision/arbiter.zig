@@ -2,6 +2,7 @@ const std = @import("std");
 const vect = @import("../core/vect.zig");
 const types = @import("../core/types.zig");
 const shape_base = @import("../shape/shape_base.zig");
+const body_mod = shape_base.body_mod;
 const collision = @import("collision.zig");
 
 const MAX_BIAS: types.cpFloat = 20.0;
@@ -22,6 +23,20 @@ pub const ArbiterContact = struct {
     target_vrn: types.cpFloat = 0.0,
 };
 
+pub const cpContactPointSet = struct {
+    count: usize = 0,
+    normal: vect.cpVect = vect.cpvzero,
+    points: [types.CP_MAX_CONTACTS_PER_ARBITER]Point = [_]Point{.{}} ** types.CP_MAX_CONTACTS_PER_ARBITER,
+
+    pub const Point = struct {
+        pointA: vect.cpVect = vect.cpvzero,
+        pointB: vect.cpVect = vect.cpvzero,
+        distance: types.cpFloat = 0.0,
+    };
+};
+
+pub const Thread = struct { next: ?*cpArbiter = null };
+
 pub const cpArbiter = struct {
     shape_a: *shape_base.cpShape,
     shape_b: *shape_base.cpShape,
@@ -29,7 +44,9 @@ pub const cpArbiter = struct {
     friction: types.cpFloat = 0.0,
     restitution: types.cpFloat = 0.0,
     surface_velocity: vect.cpVect = vect.cpvzero,
-    contacts: std.BoundedArray(ArbiterContact, 4),
+    contacts: std.BoundedArray(ArbiterContact, types.CP_MAX_CONTACTS_PER_ARBITER),
+    thread_a: Thread = .{},
+    thread_b: Thread = .{},
 
     pub fn init(shape_a: *shape_base.cpShape, shape_b: *shape_base.cpShape) cpArbiter {
         return .{
@@ -38,7 +55,9 @@ pub const cpArbiter = struct {
             .friction = surfaceFriction(shape_a, shape_b),
             .restitution = types.cpfmax(shape_a.elasticity, shape_b.elasticity),
             .surface_velocity = vect.cpvsub(shape_b.surface_velocity, shape_a.surface_velocity),
-            .contacts = std.BoundedArray(ArbiterContact, 4).init(0) catch unreachable,
+            .contacts = std.BoundedArray(ArbiterContact, types.CP_MAX_CONTACTS_PER_ARBITER).init(0) catch unreachable,
+            .thread_a = .{},
+            .thread_b = .{},
         };
     }
 
@@ -48,6 +67,8 @@ pub const cpArbiter = struct {
         self.friction = surfaceFriction(shape_a, shape_b);
         self.restitution = types.cpfmax(shape_a.elasticity, shape_b.elasticity);
         self.surface_velocity = vect.cpvsub(shape_b.surface_velocity, shape_a.surface_velocity);
+        self.thread_a = .{};
+        self.thread_b = .{};
     }
 
     pub fn matches(self: cpArbiter, shape_a: *shape_base.cpShape, shape_b: *shape_base.cpShape) bool {
@@ -59,8 +80,39 @@ pub const cpArbiter = struct {
         self.contacts.len = 0;
     }
 
+    pub fn involves(self: cpArbiter, body: *body_mod.cpBody) bool {
+        return self.shape_a.body == body or self.shape_b.body == body;
+    }
+
+    pub fn threadForBody(self: *cpArbiter, body: *body_mod.cpBody) *Thread {
+        std.debug.assert(self.shape_a.body == body or self.shape_b.body == body);
+        return if (self.shape_a.body == body) &self.thread_a else &self.thread_b;
+    }
+
+    pub fn nextForBody(self: *cpArbiter, body: *body_mod.cpBody) ?*cpArbiter {
+        return self.threadForBody(body).next;
+    }
+
+    pub fn nextPtrForBody(self: *cpArbiter, body: *body_mod.cpBody) *?*cpArbiter {
+        return &self.threadForBody(body).next;
+    }
+
+    pub fn setNextForBody(self: *cpArbiter, body: *body_mod.cpBody, next: ?*cpArbiter) void {
+        self.threadForBody(body).next = next;
+    }
+
+    pub fn otherBody(self: cpArbiter, body: *body_mod.cpBody) *body_mod.cpBody {
+        std.debug.assert(self.shape_a.body == body or self.shape_b.body == body);
+        return if (self.shape_a.body == body) self.shape_b.body else self.shape_a.body;
+    }
+
+    pub fn resetThreads(self: *cpArbiter) void {
+        self.thread_a = .{};
+        self.thread_b = .{};
+    }
+
     pub fn syncContacts(self: *cpArbiter, result: collision.CollisionResult) void {
-        var cached = std.BoundedArray(ArbiterContact, 4).init(0) catch unreachable;
+        var cached = std.BoundedArray(ArbiterContact, types.CP_MAX_CONTACTS_PER_ARBITER).init(0) catch unreachable;
         for (self.contacts.constSlice()) |contact| {
             cached.append(contact) catch {};
         }
@@ -103,6 +155,25 @@ pub const cpArbiter = struct {
             }
         }
         return depth;
+    }
+
+    pub fn contactPointSet(self: cpArbiter) cpContactPointSet {
+        var set = cpContactPointSet{};
+        const count = @min(self.contacts.len, types.CP_MAX_CONTACTS_PER_ARBITER);
+        set.count = count;
+        if (count == 0) return set;
+
+        set.normal = self.contacts.constSlice()[0].normal;
+        var i: usize = 0;
+        while (i < count) : (i += 1) {
+            const contact = self.contacts.constSlice()[i];
+            set.points[i] = .{
+                .pointA = contact.point,
+                .pointB = vect.cpvsub(contact.point, vect.cpvmult(contact.normal, contact.distance)),
+                .distance = contact.distance,
+            };
+        }
+        return set;
     }
 
     pub fn preStep(
@@ -201,6 +272,11 @@ pub fn testArbiterAccumulation() !void {
 
     try std.testing.expectEqual(@as(usize, 2), arb.contactCount());
     try std.testing.expectApproxEqAbs(0.25, arb.penetrationDepth(), 1e-6);
+
+    const set = arb.contactPointSet();
+    try std.testing.expectEqual(@as(usize, 2), set.count);
+    try std.testing.expectApproxEqAbs(-0.25, set.points[0].distance, 1e-6);
+    try std.testing.expectApproxEqAbs(0.25, set.points[0].pointB.x, 1e-6);
 
     arb.clear();
     try std.testing.expectEqual(@as(usize, 0), arb.contactCount());

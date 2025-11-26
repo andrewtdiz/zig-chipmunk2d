@@ -9,6 +9,7 @@ pub const cpCollisionType = usize;
 pub const cpGroup = usize;
 pub const cpBitmask = u32;
 pub const cpTimestamp = u32;
+pub const CP_MAX_CONTACTS_PER_ARBITER: usize = 4;
 
 pub const CP_NO_GROUP: cpGroup = 0;
 pub const CP_ALL_CATEGORIES: cpBitmask = ~@as(cpBitmask, 0);

@@ -304,6 +304,9 @@ pub const cpSpace = struct {
         body.sleeping = false;
         body.idle_stamp = self.stamp;
         body.idle_time = 0.0;
+        body.shape_list = null;
+        body.constraint_list = null;
+        body.arbiter_list = null;
         try self.bodies.append(self.allocator, body);
     }
 
@@ -321,7 +324,10 @@ pub const cpSpace = struct {
         var c: usize = 0;
         while (c < self.constraints.items.len) : (c += 1) {
             if (self.constraints.items[c].constraint.a == body or self.constraints.items[c].constraint.b == body) {
-                _ = self.constraints.orderedRemove(c);
+                const removed = self.constraints.orderedRemove(c);
+                removed.constraint.a.detachConstraint(removed.constraint);
+                removed.constraint.b.detachConstraint(removed.constraint);
+                self.constraint_runtime.release(removed.constraint);
                 c -= 1;
             }
         }
@@ -329,6 +335,7 @@ pub const cpSpace = struct {
 
     pub fn addShape(self: *cpSpace, shape: *shape_base.cpShape) !void {
         try self.shapes.append(self.allocator, shape);
+        shape.body.attachShape(shape);
         cacheShapeInternal(shape);
         const ptr = @as(*const anyopaque, @ptrCast(shape));
         switch (shape.body.body_type) {
@@ -345,6 +352,7 @@ pub const cpSpace = struct {
 
     pub fn removeShape(self: *cpSpace, shape: *shape_base.cpShape) void {
         removePtr(*shape_base.cpShape, &self.shapes, shape);
+        shape.body.detachShape(shape);
         const ptr = @as(*const anyopaque, @ptrCast(shape));
         self.collision_cache.removeShape(shape);
         filterArbitersWithShape(self, shape);
@@ -363,12 +371,18 @@ pub const cpSpace = struct {
     pub fn addConstraint(self: *cpSpace, constraint: *constraint_base.cpConstraint, ops: ConstraintOps, payload: ?*anyopaque) !void {
         const stored_payload: *anyopaque = payload orelse @as(*anyopaque, @ptrCast(constraint));
         try self.constraints.append(self.allocator, .{ .constraint = constraint, .payload = stored_payload, .ops = ops });
+        constraint.a.attachConstraint(constraint);
+        if (constraint.b != constraint.a) {
+            constraint.b.attachConstraint(constraint);
+        }
     }
 
     pub fn removeConstraint(self: *cpSpace, constraint: *constraint_base.cpConstraint) void {
         var i: usize = 0;
         while (i < self.constraints.items.len) : (i += 1) {
             if (self.constraints.items[i].constraint == constraint) {
+                constraint.a.detachConstraint(constraint);
+                constraint.b.detachConstraint(constraint);
                 _ = self.constraints.orderedRemove(i);
                 self.constraint_runtime.release(constraint);
                 break;
@@ -422,9 +436,27 @@ pub const cpSpace = struct {
 
     pub fn activateBody(self: *cpSpace, body: *body_mod.cpBody) void {
         self.wakeBody(body);
-        if (body.body_type == .dynamic) {
-            body.v_bias = vect.cpvzero;
-            body.w_bias = 0.0;
+        if (body.body_type != .dynamic) return;
+
+        body.v_bias = vect.cpvzero;
+        body.w_bias = 0.0;
+
+        var arb = body.arbiter_list;
+        while (arb) |entry| {
+            const other = entry.otherBody(body);
+            if (other.body_type == .dynamic and other.sleeping) {
+                self.wakeBody(other);
+            }
+            arb = entry.nextForBody(body);
+        }
+
+        var constraint_ptr = body.constraint_list;
+        while (constraint_ptr) |c| {
+            const other = if (c.a == body) c.b else c.a;
+            if (other.body_type == .dynamic and other.sleeping) {
+                self.wakeBody(other);
+            }
+            constraint_ptr = c.nextForBody(body);
         }
     }
 
@@ -462,6 +494,17 @@ pub const cpSpace = struct {
         data: ?*anyopaque,
     ) void {
         QueryAPI.segmentQuery(self, start, end, radius, filter, func, data);
+    }
+
+    pub fn segmentQueryFirst(
+        self: *const cpSpace,
+        start: vect.cpVect,
+        end: vect.cpVect,
+        radius: types.cpFloat,
+        filter: shape_base.cpShapeFilter,
+        info: ?*shape_base.cpSegmentQueryInfo,
+    ) ?*shape_base.cpShape {
+        return QueryAPI.segmentQueryFirst(self, start, end, radius, filter, info);
     }
 
     pub fn shapeQuery(
@@ -527,10 +570,10 @@ pub const cpSpace = struct {
     }
 
     pub fn reindexShapesForBody(self: *cpSpace, body: *body_mod.cpBody) void {
-        for (self.shapes.items) |shape| {
-            if (shape.body == body) {
-                self.reindexShape(shape);
-            }
+        var shape_ptr = body.shape_list;
+        while (shape_ptr) |shape| {
+            self.reindexShape(shape);
+            shape_ptr = shape.next;
         }
     }
 };
@@ -674,11 +717,58 @@ fn cacheShapeInternal(shape: *shape_base.cpShape) void {
     }
 }
 
-fn recycleArbiters(space: *cpSpace) void {
-    for (space.arbiters.items) |arb| {
-        space.arbiter_pool.append(space.allocator, arb) catch {};
+fn unlinkArbiterFromBodies(arb_ptr: *arbiter.cpArbiter) void {
+    arb_ptr.shape_a.body.detachArbiter(arb_ptr);
+    arb_ptr.shape_b.body.detachArbiter(arb_ptr);
+    arb_ptr.resetThreads();
+}
+
+fn relinkArbiter(space: *cpSpace, index: usize) void {
+    var arb_ptr = &space.arbiters.items[index];
+    arb_ptr.resetThreads();
+    arb_ptr.shape_a.body.attachArbiter(arb_ptr);
+    arb_ptr.shape_b.body.attachArbiter(arb_ptr);
+}
+
+fn removeArbiterAt(space: *cpSpace, index: usize) arbiter.cpArbiter {
+    const last_idx = space.arbiters.items.len - 1;
+    unlinkArbiterFromBodies(&space.arbiters.items[index]);
+    const removed = space.arbiters.items[index];
+    if (index != last_idx) {
+        unlinkArbiterFromBodies(&space.arbiters.items[last_idx]);
+        space.arbiters.items[index] = space.arbiters.items[last_idx];
+        relinkArbiter(space, index);
     }
-    space.arbiters.clearRetainingCapacity();
+    space.arbiters.items.len -= 1;
+    return removed;
+}
+
+fn attachArbitersToBodies(space: *cpSpace) void {
+    for (space.bodies.items) |body| {
+        body.arbiter_list = null;
+    }
+    var i: usize = 0;
+    while (i < space.arbiters.items.len) : (i += 1) {
+        relinkArbiter(space, i);
+    }
+
+    var it = space.arbiter_cache.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.stamp == space.stamp) continue;
+        if (entry.value_ptr.separated) continue;
+
+        var cached = &entry.value_ptr.value;
+        cached.resetThreads();
+        cached.shape_a.body.attachArbiter(cached);
+        cached.shape_b.body.attachArbiter(cached);
+    }
+}
+
+fn recycleArbiters(space: *cpSpace) void {
+    while (space.arbiters.items.len > 0) {
+        const removed = removeArbiterAt(space, space.arbiters.items.len - 1);
+        space.arbiter_pool.append(space.allocator, removed) catch {};
+    }
 }
 
 pub fn startBroadPhase(space: *cpSpace) void {
@@ -704,6 +794,7 @@ pub fn resolveCollisionsRange(space: *cpSpace, start: usize, end: usize, mutex: 
 }
 
 pub fn finishBroadPhase(space: *cpSpace) void {
+    attachArbitersToBodies(space);
     syncArbiterCache(space);
     pruneArbiterCache(space);
 }
@@ -721,7 +812,9 @@ fn takeArbiter(space: *cpSpace, shape_a: *shape_base.cpShape, shape_b: *shape_ba
 }
 
 fn stashArbiter(space: *cpSpace, arb: arbiter.cpArbiter) void {
-    space.arbiter_pool.append(space.allocator, arb) catch {};
+    var cleaned = arb;
+    cleaned.resetThreads();
+    space.arbiter_pool.append(space.allocator, cleaned) catch {};
 }
 
 fn makeTypePairKey(type_a: types.cpCollisionType, type_b: types.cpCollisionType) u128 {
@@ -791,9 +884,11 @@ fn activatePair(space: *cpSpace, a: *shape_base.cpShape, b: *shape_base.cpShape)
 
 fn syncArbiterCache(space: *cpSpace) void {
     for (space.arbiters.items) |arb_ref| {
-        const key = makePairKey(arb_ref.shape_a, arb_ref.shape_b);
+        var copy = arb_ref;
+        copy.resetThreads();
+        const key = makePairKey(copy.shape_a, copy.shape_b);
         if (space.arbiter_cache.getPtr(key)) |cached| {
-            cached.value = arb_ref;
+            cached.value = copy;
             cached.stamp = space.stamp;
             cached.separated = false;
         }
@@ -847,9 +942,11 @@ fn filterArbitersWithShape(space: *cpSpace, shape: *shape_base.cpShape) void {
         const handler = selectHandler(space, space.arbiters.items[i].shape_a, space.arbiters.items[i].shape_b);
         if (matchesShape(space.arbiters.items[i], shape)) {
             if (handler.separate) |sep_func| {
-                sep_func(&space.arbiters.items[i], space);
+                var temp = space.arbiters.items[i];
+                sep_func(&temp, space);
             }
-            _ = space.arbiters.swapRemove(i);
+            const removed = removeArbiterAt(space, i);
+            stashArbiter(space, removed);
             continue;
         }
         i += 1;
@@ -883,9 +980,11 @@ fn filterArbitersWithBody(space: *cpSpace, body: *body_mod.cpBody) void {
         const handler = selectHandler(space, ar.shape_a, ar.shape_b);
         if (matchesBody(ar, body)) {
             if (handler.separate) |sep_func| {
-                sep_func(&space.arbiters.items[i], space);
+                var temp = space.arbiters.items[i];
+                sep_func(&temp, space);
             }
-            _ = space.arbiters.swapRemove(i);
+            const removed = removeArbiterAt(space, i);
+            stashArbiter(space, removed);
             continue;
         }
         i += 1;
@@ -1162,6 +1261,34 @@ pub fn testSpaceQueries() !void {
     try std.testing.expectEqual(@as(usize, 1), hits);
 }
 
+pub fn testSpaceSegmentQueryFirst() !void {
+    var space = cpSpace.init(std.testing.allocator);
+    defer space.deinit();
+
+    var body = body_mod.cpBody.init(1.0, 1.0);
+    body.setPosition(vect.cpvzero);
+    var circle_shape = circle.cpCircleShape.init(&body, 1.0, vect.cpvzero);
+
+    try space.addBody(&body);
+    try space.addShape(&circle_shape.base);
+
+    var info: shape_base.cpSegmentQueryInfo = undefined;
+    const hit = space.segmentQueryFirst(
+        vect.cpv(-2.0, 0.0),
+        vect.cpv(2.0, 0.0),
+        0.0,
+        shape_base.cpShapeFilter.all(),
+        &info,
+    );
+
+    try std.testing.expect(hit == &circle_shape.base);
+    try std.testing.expectApproxEqAbs(-1.0, info.point.x, 1e-6);
+    try std.testing.expectApproxEqAbs(0.0, info.point.y, 1e-6);
+    try std.testing.expectApproxEqAbs(0.25, info.alpha, 1e-6);
+    try std.testing.expectApproxEqAbs(-1.0, info.normal.x, 1e-6);
+    try std.testing.expectApproxEqAbs(0.0, info.normal.y, 1e-6);
+}
+
 test "space integration applies gravity" {
     try testSpaceIntegration();
 }
@@ -1176,6 +1303,45 @@ test "space enforces constraint distances" {
 
 test "space queries find overlapping shapes" {
     try testSpaceQueries();
+}
+
+test "space segmentQueryFirst reports nearest hit" {
+    try testSpaceSegmentQueryFirst();
+}
+
+test "sleeping bodies keep arbiter links for activation" {
+    var space = cpSpace.init(std.testing.allocator);
+    defer space.deinit();
+    space.gravity = vect.cpvzero;
+    space.sleep_time_threshold = 0.0;
+
+    var body_a = body_mod.cpBody.init(1.0, 1.0);
+    var body_b = body_mod.cpBody.init(1.0, 1.0);
+    body_a.setPosition(vect.cpvzero);
+    body_b.setPosition(vect.cpv(0.5, 0.0));
+
+    var shape_a = circle.cpCircleShape.init(&body_a, 0.5, vect.cpvzero);
+    var shape_b = circle.cpCircleShape.init(&body_b, 0.5, vect.cpvzero);
+
+    try space.addBody(&body_a);
+    try space.addBody(&body_b);
+    try space.addShape(&shape_a.base);
+    try space.addShape(&shape_b.base);
+
+    space.resolveCollisions();
+    try std.testing.expect(body_a.arbiter_list != null);
+    try std.testing.expect(body_b.arbiter_list != null);
+
+    space.processComponents(0.1);
+    try std.testing.expect(body_a.sleeping);
+    try std.testing.expect(body_b.sleeping);
+
+    space.startBroadPhase();
+    space.resolveCollisionsRange(0, space.dynamic_shapes.items.len, null);
+    space.finishBroadPhase();
+
+    try std.testing.expect(body_a.arbiter_list != null);
+    try std.testing.expect(body_b.arbiter_list != null);
 }
 
 test "space reindexes shapes for moved bodies" {
