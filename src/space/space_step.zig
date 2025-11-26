@@ -5,6 +5,7 @@ const vect = @import("../core/vect.zig");
 const shape_base = @import("../shape/shape_base.zig");
 const collision = @import("../collision/collision.zig");
 const arbiter = @import("../collision/arbiter.zig");
+const constraint_base = @import("../constraint/constraint_base.zig");
 const body_mod = @import("body.zig");
 
 pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
@@ -42,7 +43,6 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
 
             runConstraintCallback(space, dt, dt_coef, .postStep);
             runPostSolve(space);
-            runSeparations(space);
             runPostSteps(space);
             syncArbiterCache(space);
             pruneArbiterCache(space);
@@ -92,20 +92,35 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
         }
 
         pub fn processComponents(space: *Space, dt: types.cpFloat) void {
-            _ = dt;
+            const sleep_enabled = space.sleep_time_threshold != types.CP_INFINITY;
+            if (!sleep_enabled) {
+                for (space.bodies.items) |body| {
+                    if (body.body_type != .dynamic) continue;
+                    if (body.sleeping) space.activateBody(body);
+                    body.idle_time = 0.0;
+                }
+                return;
+            }
 
-            var index_map = std.AutoHashMap(*body_mod.cpBody, usize).init(space.allocator);
-            defer index_map.deinit();
+            const dv = space.idle_speed_threshold;
+            const dvsq: types.cpFloat = if (dv != 0.0) dv * dv else vect.cpvlengthsq(space.gravity) * dt * dt;
 
-            var parents = std.ArrayList(usize).init(space.allocator);
-            defer parents.deinit();
-            var ranks = std.ArrayList(u8).init(space.allocator);
-            defer ranks.deinit();
-            var anchored = std.ArrayList(bool).init(space.allocator);
-            defer anchored.deinit();
+            var index_map = &space.component_index_map;
+            index_map.clearRetainingCapacity();
+
+            var parents = &space.component_parents;
+            parents.clearRetainingCapacity();
+            var ranks = &space.component_ranks;
+            ranks.clearRetainingCapacity();
+            var anchored = &space.component_body_anchored;
+            anchored.clearRetainingCapacity();
 
             for (space.bodies.items) |body| {
                 if (body.body_type != .dynamic) continue;
+                const ke_threshold: types.cpFloat = if (dvsq != 0.0) body.m * dvsq else 0.0;
+                const energy = body.kineticEnergy();
+                body.idle_time = if (energy > ke_threshold) 0.0 else body.idle_time + dt;
+
                 parents.append(space.allocator, parents.items.len) catch {};
                 ranks.append(space.allocator, 0) catch {};
                 anchored.append(space.allocator, false) catch {};
@@ -171,20 +186,18 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
                 }
             }
 
-            var component_energy = std.ArrayList(types.cpFloat).init(space.allocator);
-            defer component_energy.deinit();
-            var component_anchored = std.ArrayList(bool).init(space.allocator);
-            defer component_anchored.deinit();
-            component_energy.resize(parents.items.len) catch {};
-            component_anchored.resize(parents.items.len) catch {};
-            @memset(component_energy.items, 0.0);
+            var component_min_idle = &space.component_min_idle;
+            var component_anchored = &space.component_root_anchored;
+            component_min_idle.resize(space.allocator, parents.items.len) catch {};
+            component_anchored.resize(space.allocator, parents.items.len) catch {};
+            @memset(component_min_idle.items, types.CP_INFINITY);
             @memset(component_anchored.items, false);
 
             for (space.bodies.items) |body| {
                 if (body.body_type != .dynamic) continue;
                 const idx = index_map.get(body) orelse continue;
                 const root = unionFind.find(idx);
-                component_energy.items[root] += body.kineticEnergy();
+                component_min_idle.items[root] = @min(component_min_idle.items[root], body.idle_time);
                 component_anchored.items[root] = component_anchored.items[root] or anchored.items[idx];
             }
 
@@ -192,13 +205,17 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
                 if (body.body_type != .dynamic) continue;
                 const idx = index_map.get(body) orelse continue;
                 const root = unionFind.find(idx);
-                const should_sleep = !component_anchored.items[root] and component_energy.items[root] < space.sleep_energy_threshold;
-                body.sleeping = should_sleep;
+                const should_sleep = !component_anchored.items[root] and component_min_idle.items[root] >= space.sleep_time_threshold;
                 if (should_sleep) {
-                    body.v = vect.cpvzero;
-                    body.w = 0.0;
-                    body.v_bias = vect.cpvzero;
-                    body.w_bias = 0.0;
+                    if (!body.sleeping) {
+                        body.sleeping = true;
+                        body.v = vect.cpvzero;
+                        body.w = 0.0;
+                        body.v_bias = vect.cpvzero;
+                        body.w_bias = 0.0;
+                    }
+                } else if (body.sleeping) {
+                    space.activateBody(body);
                 }
             }
         }
@@ -232,8 +249,9 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
         }
 
         fn preStepArbiters(space: *Space, dt: types.cpFloat) void {
+            const bias_coef = constraint_base.biasCoefficient(space.collision_bias, dt);
             for (space.arbiters.items) |*arb_ref| {
-                arb_ref.preStep(dt);
+                arb_ref.preStep(dt, space.collision_slop, bias_coef);
             }
         }
 
@@ -246,15 +264,6 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
         fn resolveArbiters(space: *Space) void {
             for (space.arbiters.items) |*arb_ref| {
                 arb_ref.applyImpulse();
-            }
-        }
-
-        fn runSeparations(space: *Space) void {
-            for (space.arbiters.items) |*arb_ref| {
-                const handler = selectHandler(space, arb_ref.shape_a, arb_ref.shape_b);
-                if (handler.separate) |sep_func| {
-                    sep_func(arb_ref, space);
-                }
             }
         }
 
@@ -274,34 +283,41 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
             space.post_steps.clearRetainingCapacity();
         }
 
-        fn updateSleepStates(space: *Space) void {
-            for (space.bodies.items) |body| {
-                if (body.body_type != .dynamic) continue;
-                if (body.sleeping) continue;
-                const energy = body.kineticEnergy();
-                if (energy > space.sleep_energy_threshold) {
-                    body.idle_stamp = space.stamp;
-                    continue;
-                }
-
-                if (space.stamp - body.idle_stamp >= space.sleep_delay) {
-                    body.sleeping = true;
-                    body.v = vect.cpvzero;
-                    body.w = 0.0;
-                }
-            }
-        }
-
         fn activatePair(space: *Space, a: *shape_base.cpShape, b: *shape_base.cpShape) void {
             space.activateBody(a.body);
             space.activateBody(b.body);
         }
 
         fn selectHandler(space: *Space, a: *shape_base.cpShape, b: *shape_base.cpShape) Handler {
-            if (space.handlers.get(a.collision_type)) |handler| return handler;
-            if (space.handlers.get(b.collision_type)) |handler| return handler;
-            if (space.wildcard_handlers.get(a.collision_type)) |handler| return handler;
-            if (space.wildcard_handlers.get(b.collision_type)) |handler| return handler;
+            const key = makeTypePairKey(a.collision_type, b.collision_type);
+            if (space.handler_cache.get(key)) |cached| return cached;
+
+            if (space.pair_handlers.get(key)) |handler| {
+                space.handler_cache.put(space.allocator, key, handler) catch {};
+                return handler;
+            }
+
+            if (space.wildcard_handlers.get(a.collision_type)) |handler| {
+                space.handler_cache.put(space.allocator, key, handler) catch {};
+                return handler;
+            }
+
+            if (space.wildcard_handlers.get(b.collision_type)) |handler| {
+                space.handler_cache.put(space.allocator, key, handler) catch {};
+                return handler;
+            }
+
+            if (space.handlers.get(a.collision_type)) |handler| {
+                space.handler_cache.put(space.allocator, key, handler) catch {};
+                return handler;
+            }
+
+            if (space.handlers.get(b.collision_type)) |handler| {
+                space.handler_cache.put(space.allocator, key, handler) catch {};
+                return handler;
+            }
+
+            space.handler_cache.put(space.allocator, key, space.handler) catch {};
             return space.handler;
         }
 
@@ -313,6 +329,12 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
             return (@as(u128, min_ptr) << 64) | @as(u128, max_ptr);
         }
 
+        fn makeTypePairKey(type_a: types.cpCollisionType, type_b: types.cpCollisionType) u128 {
+            const min_type = @min(type_a, type_b);
+            const max_type = @max(type_a, type_b);
+            return (@as(u128, min_type) << 64) | @as(u128, max_type);
+        }
+
         fn fetchArbiter(space: *Space, a: *shape_base.cpShape, b: *shape_base.cpShape) ?*CachedArbiter {
             const key = makePairKey(a, b);
             var gop = space.arbiter_cache.getOrPut(key) catch return null;
@@ -321,28 +343,39 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
                 gop.value_ptr.* = .{ .value = pooled, .stamp = space.stamp };
             }
             gop.value_ptr.stamp = space.stamp;
+            gop.value_ptr.separated = false;
             gop.value_ptr.value.reuse(a, b);
             return gop.value_ptr;
         }
 
         fn pruneArbiterCache(space: *Space) void {
-            var stale_keys: std.ArrayList(u128) = .empty;
-            defer stale_keys.deinit(space.allocator);
+            space.stale_arbiter_keys.clearRetainingCapacity();
 
             var it = space.arbiter_cache.iterator();
             while (it.next()) |entry| {
-                if (entry.value_ptr.stamp != space.stamp) {
-                    stale_keys.append(space.allocator, entry.key_ptr.*) catch {};
+                const body_a = entry.value_ptr.value.shape_a.body;
+                const body_b = entry.value_ptr.value.shape_b.body;
+                if ((body_a.body_type == .static or body_a.sleeping) and (body_b.body_type == .static or body_b.sleeping)) {
+                    continue;
+                }
+
+                const ticks = space.stamp - entry.value_ptr.stamp;
+                if (ticks >= 1 and !entry.value_ptr.separated) {
+                    const handler = selectHandler(space, entry.value_ptr.value.shape_a, entry.value_ptr.value.shape_b);
+                    if (handler.separate) |sep_func| {
+                        var temp = entry.value_ptr.value;
+                        sep_func(&temp, space);
+                    }
+                    entry.value_ptr.separated = true;
+                }
+
+                if (ticks >= @as(u64, space.collision_persistence)) {
+                    space.stale_arbiter_keys.append(space.allocator, entry.key_ptr.*) catch {};
                 }
             }
 
-            for (stale_keys.items) |key| {
+            for (space.stale_arbiter_keys.items) |key| {
                 if (space.arbiter_cache.remove(key)) |cached| {
-                    const handler = selectHandler(space, cached.value.shape_a, cached.value.shape_b);
-                    if (handler.separate) |sep_func| {
-                        var temp = cached.value;
-                        sep_func(&temp, space);
-                    }
                     stashArbiter(space, cached.value);
                 }
             }
@@ -358,6 +391,7 @@ pub fn makeStepper(comptime Space: type, comptime Helpers: type) type {
                 if (space.arbiter_cache.getPtr(key)) |cached| {
                     cached.value = arb_ref;
                     cached.stamp = space.stamp;
+                    cached.separated = false;
                 }
             }
         }

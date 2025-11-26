@@ -45,6 +45,12 @@ pub fn cpShapeMassInfoForSegment(mass: types.cpFloat, a: vect.cpVect, b: vect.cp
 }
 
 pub fn cpShapeMassInfoForPoly(mass: types.cpFloat, vertices: []const vect.cpVect, offset: vect.cpVect, radius: types.cpFloat) cpShapeMassInfo {
+    if (vertices.len == 2) {
+        const a = vect.cpvadd(vertices[0], offset);
+        const b_ = vect.cpvadd(vertices[1], offset);
+        return cpShapeMassInfoForSegment(mass, a, b_, radius);
+    }
+
     // Compute centroid with offset applied without extra allocations.
     var area_acc: types.cpFloat = 0.0;
     var centroid = vect.cpvzero;
@@ -115,7 +121,8 @@ pub fn cpAreaForSegment(a: vect.cpVect, b: vect.cpVect, radius: types.cpFloat) t
 pub fn cpAreaForPoly(vertices: []const vect.cpVect, radius: types.cpFloat) types.cpFloat {
     var area: types.cpFloat = 0.0;
     var perimeter: types.cpFloat = 0.0;
-    if (vertices.len < 3) return 0.0;
+    if (vertices.len == 2) return cpAreaForSegment(vertices[0], vertices[1], radius);
+    if (vertices.len < 2) return 0.0;
 
     var i: usize = 0;
     while (i < vertices.len) : (i += 1) {
@@ -149,8 +156,9 @@ pub fn cpCentroidForPoly(vertices: []const vect.cpVect) vect.cpVect {
     return vect.cpvmult(centroid, 1.0 / (6.0 * area));
 }
 
-pub fn cpMomentForPoly(mass: types.cpFloat, vertices: []const vect.cpVect, offset: vect.cpVect, _: types.cpFloat) types.cpFloat {
-    if (vertices.len == 2) return body_mod.cpMomentForSegment(mass, vertices[0], vertices[1], 0.0);
+pub fn cpMomentForPoly(mass: types.cpFloat, vertices: []const vect.cpVect, offset: vect.cpVect, radius: types.cpFloat) types.cpFloat {
+    _ = radius;
+    if (vertices.len == 2) return body_mod.cpMomentForSegment(mass, vertices[0], vertices[1], radius);
     if (vertices.len < 2) return 0.0;
 
     var sum1: types.cpFloat = 0.0;

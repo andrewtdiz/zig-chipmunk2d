@@ -189,6 +189,9 @@ const ConstraintRuntimeStorage = struct {
     }
 };
 
+const DEFAULT_COLLISION_SLOP: types.cpFloat = 0.1;
+const DEFAULT_COLLISION_BIAS: types.cpFloat = types.cpfpow(1.0 - 0.1, 60.0);
+
 fn shapeBounds(ptr: *const anyopaque, _: ?*const anyopaque) bb.cpBB {
     const shape = @as(*const shape_base.cpShape, @ptrCast(ptr));
     return shape.bbValue();
@@ -197,6 +200,7 @@ fn shapeBounds(ptr: *const anyopaque, _: ?*const anyopaque) bb.cpBB {
 const CachedArbiter = struct {
     value: arbiter.cpArbiter,
     stamp: u64,
+    separated: bool = false,
 };
 
 pub const cpSpace = struct {
@@ -207,8 +211,11 @@ pub const cpSpace = struct {
     stamp: u64 = 0,
     prev_dt: types.cpFloat = 0.0,
     curr_dt: types.cpFloat = 0.0,
-    sleep_energy_threshold: types.cpFloat = 0.01,
-    sleep_delay: u64 = 20,
+    sleep_time_threshold: types.cpFloat = types.CP_INFINITY,
+    idle_speed_threshold: types.cpFloat = 0.0,
+    collision_persistence: types.cpTimestamp = 3,
+    collision_slop: types.cpFloat = DEFAULT_COLLISION_SLOP,
+    collision_bias: types.cpFloat = DEFAULT_COLLISION_BIAS,
 
     bodies: std.ArrayList(*body_mod.cpBody),
     shapes: std.ArrayList(*shape_base.cpShape),
@@ -220,12 +227,21 @@ pub const cpSpace = struct {
     arbiter_pool: std.ArrayList(arbiter.cpArbiter),
     post_steps: std.ArrayList(PostStepCallback),
     collision_cache: collision.CollisionIdCache,
+    pair_handlers: std.AutoHashMap(u128, CollisionHandler),
+    handler_cache: std.AutoHashMap(u128, CollisionHandler),
     constraint_runtime: ConstraintRuntimeStorage,
     handlers: std.AutoHashMap(types.cpCollisionType, CollisionHandler),
     wildcard_handlers: std.AutoHashMap(types.cpCollisionType, CollisionHandler),
     handler: CollisionHandler = .{},
     dynamic_index: ManagedIndex,
     static_index: ManagedIndex,
+    component_index_map: std.AutoHashMap(*body_mod.cpBody, usize),
+    component_parents: std.ArrayList(usize),
+    component_ranks: std.ArrayList(u8),
+    component_body_anchored: std.ArrayList(bool),
+    component_root_anchored: std.ArrayList(bool),
+    component_min_idle: std.ArrayList(types.cpFloat),
+    stale_arbiter_keys: std.ArrayList(u128),
 
     pub fn init(allocator: std.mem.Allocator) cpSpace {
         return .{
@@ -240,17 +256,28 @@ pub const cpSpace = struct {
             .arbiter_pool = .empty,
             .post_steps = .empty,
             .collision_cache = collision.CollisionIdCache.init(allocator),
+            .pair_handlers = std.AutoHashMap(u128, CollisionHandler).init(allocator),
+            .handler_cache = std.AutoHashMap(u128, CollisionHandler).init(allocator),
             .constraint_runtime = ConstraintRuntimeStorage.init(allocator),
             .handlers = std.AutoHashMap(types.cpCollisionType, CollisionHandler).init(allocator),
             .wildcard_handlers = std.AutoHashMap(types.cpCollisionType, CollisionHandler).init(allocator),
             .dynamic_index = ManagedIndex.init(allocator, .bb_tree, shapeBounds, null, null),
             .static_index = ManagedIndex.init(allocator, .bb_tree, shapeBounds, null, null),
+            .component_index_map = std.AutoHashMap(*body_mod.cpBody, usize).init(allocator),
+            .component_parents = .empty,
+            .component_ranks = .empty,
+            .component_body_anchored = .empty,
+            .component_root_anchored = .empty,
+            .component_min_idle = .empty,
+            .stale_arbiter_keys = .empty,
         };
     }
 
     pub fn deinit(self: *cpSpace) void {
         self.constraint_runtime.deinit();
         self.collision_cache.deinit();
+        self.pair_handlers.deinit();
+        self.handler_cache.deinit();
         self.bodies.deinit(self.allocator);
         self.shapes.deinit(self.allocator);
         self.dynamic_shapes.deinit(self.allocator);
@@ -264,11 +291,19 @@ pub const cpSpace = struct {
         self.wildcard_handlers.deinit();
         self.dynamic_index.deinit();
         self.static_index.deinit();
+        self.component_index_map.deinit();
+        self.component_parents.deinit(self.allocator);
+        self.component_ranks.deinit(self.allocator);
+        self.component_body_anchored.deinit(self.allocator);
+        self.component_root_anchored.deinit(self.allocator);
+        self.component_min_idle.deinit(self.allocator);
+        self.stale_arbiter_keys.deinit(self.allocator);
     }
 
     pub fn addBody(self: *cpSpace, body: *body_mod.cpBody) !void {
         body.sleeping = false;
         body.idle_stamp = self.stamp;
+        body.idle_time = 0.0;
         try self.bodies.append(self.allocator, body);
     }
 
@@ -355,19 +390,34 @@ pub const cpSpace = struct {
 
     pub fn setCollisionHandler(self: *cpSpace, handler: CollisionHandler) void {
         self.handler = handler;
+        self.handler_cache.clearRetainingCapacity();
+    }
+
+    pub fn setCollisionHandlerForPair(
+        self: *cpSpace,
+        type_a: types.cpCollisionType,
+        type_b: types.cpCollisionType,
+        handler: CollisionHandler,
+    ) void {
+        const key = makeTypePairKey(type_a, type_b);
+        self.pair_handlers.put(self.allocator, key, handler) catch {};
+        self.handler_cache.clearRetainingCapacity();
     }
 
     pub fn setCollisionHandlerForType(self: *cpSpace, collision_type: types.cpCollisionType, handler: CollisionHandler) void {
         self.handlers.put(self.allocator, collision_type, handler) catch {};
+        self.handler_cache.clearRetainingCapacity();
     }
 
     pub fn setWildcardHandler(self: *cpSpace, collision_type: types.cpCollisionType, handler: CollisionHandler) void {
         self.wildcard_handlers.put(self.allocator, collision_type, handler) catch {};
+        self.handler_cache.clearRetainingCapacity();
     }
 
     pub fn wakeBody(self: *cpSpace, body: *body_mod.cpBody) void {
         body.sleeping = false;
         body.idle_stamp = self.stamp;
+        body.idle_time = 0.0;
     }
 
     pub fn activateBody(self: *cpSpace, body: *body_mod.cpBody) void {
@@ -382,20 +432,63 @@ pub const cpSpace = struct {
         Stepper.step(self, dt);
     }
 
-    pub fn pointQuery(self: *const cpSpace, point: vect.cpVect, filter: shape_base.cpShapeFilter, func: fn (*shape_base.cpShape, vect.cpVect, types.cpFloat) void) void {
-        QueryAPI.pointQuery(self, point, filter, func);
+    pub fn pointQuery(
+        self: *const cpSpace,
+        point: vect.cpVect,
+        filter: shape_base.cpShapeFilter,
+        func: fn (*shape_base.cpShape, vect.cpVect, types.cpFloat, ?*anyopaque) void,
+        data: ?*anyopaque,
+    ) void {
+        QueryAPI.pointQuery(self, point, filter, func, data);
     }
 
-    pub fn bbQuery(self: *const cpSpace, bounds: bb.cpBB, filter: shape_base.cpShapeFilter, func: fn (*shape_base.cpShape) void) void {
-        QueryAPI.bbQuery(self, bounds, filter, func);
+    pub fn bbQuery(
+        self: *const cpSpace,
+        bounds: bb.cpBB,
+        filter: shape_base.cpShapeFilter,
+        func: fn (*shape_base.cpShape, ?*anyopaque) void,
+        data: ?*anyopaque,
+    ) void {
+        QueryAPI.bbQuery(self, bounds, filter, func, data);
     }
 
-    pub fn segmentQuery(self: *const cpSpace, start: vect.cpVect, end: vect.cpVect, radius: types.cpFloat, filter: shape_base.cpShapeFilter, func: fn (*shape_base.cpShape, vect.cpVect, vect.cpVect, types.cpFloat) void) void {
-        QueryAPI.segmentQuery(self, start, end, radius, filter, func);
+    pub fn segmentQuery(
+        self: *const cpSpace,
+        start: vect.cpVect,
+        end: vect.cpVect,
+        radius: types.cpFloat,
+        filter: shape_base.cpShapeFilter,
+        func: fn (*shape_base.cpShape, vect.cpVect, vect.cpVect, types.cpFloat, ?*anyopaque) void,
+        data: ?*anyopaque,
+    ) void {
+        QueryAPI.segmentQuery(self, start, end, radius, filter, func, data);
     }
 
-    pub fn shapeQuery(self: *const cpSpace, target: *shape_base.cpShape, func: fn (*shape_base.cpShape, collision.CollisionResult) void) void {
-        QueryAPI.shapeQuery(self, target, func);
+    pub fn shapeQuery(
+        self: *const cpSpace,
+        target: *shape_base.cpShape,
+        func: fn (*shape_base.cpShape, collision.CollisionResult, ?*anyopaque) void,
+        data: ?*anyopaque,
+    ) void {
+        QueryAPI.shapeQuery(self, target, func, data);
+    }
+
+    pub fn eachBody(self: *const cpSpace, func: fn (*body_mod.cpBody, ?*anyopaque) void, data: ?*anyopaque) void {
+        for (self.bodies.items) |body| {
+            func(body, data);
+        }
+    }
+
+    pub fn eachShape(self: *const cpSpace, func: fn (*shape_base.cpShape, ?*anyopaque) void, data: ?*anyopaque) void {
+        for (self.shapes.items) |shape| {
+            func(shape, data);
+        }
+    }
+
+    pub fn eachConstraint(self: *const cpSpace, func: fn (*constraint_base.cpConstraint, ?*anyopaque) void, data: ?*anyopaque) void {
+        for (self.constraints.items) |entry| {
+            func(entry.constraint, data);
+        }
     }
 
     pub fn setDynamicIndex(self: *cpSpace, kind: IndexKind) !void {
@@ -538,18 +631,16 @@ pub fn resolveArbitersRange(space: *cpSpace, start: usize, end: usize) void {
     var idx = start;
     while (idx < end) : (idx += 1) {
         var arb_ptr = &space.arbiters.items[idx];
-        arb_ptr.preStep(1.0);
+        const bias_coef = constraint_base.biasCoefficient(space.collision_bias, 1.0);
+        arb_ptr.preStep(1.0, space.collision_slop, bias_coef);
         arb_ptr.applyImpulse();
-
-        if (space.handler.separate) |sep_func| {
-            sep_func(arb_ptr, space);
-        }
     }
 }
 
 pub fn postSolveArbiters(space: *cpSpace) void {
-    if (space.handler.postSolve) |post_func| {
-        for (space.arbiters.items) |*arb_ref| {
+    for (space.arbiters.items) |*arb_ref| {
+        const handler = selectHandler(space, arb_ref.shape_a, arb_ref.shape_b);
+        if (handler.postSolve) |post_func| {
             post_func(arb_ref, space);
         }
     }
@@ -563,8 +654,9 @@ pub fn runPostSteps(space: *cpSpace) void {
 }
 
 pub fn preStepArbiters(space: *cpSpace, dt: types.cpFloat) void {
+    const bias_coef = constraint_base.biasCoefficient(space.collision_bias, dt);
     for (space.arbiters.items) |*arb_ref| {
-        arb_ref.preStep(dt);
+        arb_ref.preStep(dt, space.collision_slop, bias_coef);
     }
 }
 
@@ -632,11 +724,42 @@ fn stashArbiter(space: *cpSpace, arb: arbiter.cpArbiter) void {
     space.arbiter_pool.append(space.allocator, arb) catch {};
 }
 
+fn makeTypePairKey(type_a: types.cpCollisionType, type_b: types.cpCollisionType) u128 {
+    const min_type = @min(type_a, type_b);
+    const max_type = @max(type_a, type_b);
+    return (@as(u128, min_type) << 64) | @as(u128, max_type);
+}
+
 fn selectHandler(space: *cpSpace, a: *shape_base.cpShape, b: *shape_base.cpShape) CollisionHandler {
-    if (space.handlers.get(a.collision_type)) |handler| return handler;
-    if (space.handlers.get(b.collision_type)) |handler| return handler;
-    if (space.wildcard_handlers.get(a.collision_type)) |handler| return handler;
-    if (space.wildcard_handlers.get(b.collision_type)) |handler| return handler;
+    const key = makeTypePairKey(a.collision_type, b.collision_type);
+    if (space.handler_cache.get(key)) |cached| return cached;
+
+    if (space.pair_handlers.get(key)) |handler| {
+        space.handler_cache.put(space.allocator, key, handler) catch {};
+        return handler;
+    }
+
+    if (space.wildcard_handlers.get(a.collision_type)) |handler| {
+        space.handler_cache.put(space.allocator, key, handler) catch {};
+        return handler;
+    }
+
+    if (space.wildcard_handlers.get(b.collision_type)) |handler| {
+        space.handler_cache.put(space.allocator, key, handler) catch {};
+        return handler;
+    }
+
+    if (space.handlers.get(a.collision_type)) |handler| {
+        space.handler_cache.put(space.allocator, key, handler) catch {};
+        return handler;
+    }
+
+    if (space.handlers.get(b.collision_type)) |handler| {
+        space.handler_cache.put(space.allocator, key, handler) catch {};
+        return handler;
+    }
+
+    space.handler_cache.put(space.allocator, key, space.handler) catch {};
     return space.handler;
 }
 
@@ -656,6 +779,7 @@ fn fetchArbiter(space: *cpSpace, a: *shape_base.cpShape, b: *shape_base.cpShape)
         gop.value_ptr.* = .{ .value = pooled, .stamp = space.stamp };
     }
     gop.value_ptr.stamp = space.stamp;
+    gop.value_ptr.separated = false;
     gop.value_ptr.value.reuse(a, b);
     return gop.value_ptr;
 }
@@ -671,28 +795,39 @@ fn syncArbiterCache(space: *cpSpace) void {
         if (space.arbiter_cache.getPtr(key)) |cached| {
             cached.value = arb_ref;
             cached.stamp = space.stamp;
+            cached.separated = false;
         }
     }
 }
 
 fn pruneArbiterCache(space: *cpSpace) void {
-    var stale_keys = std.ArrayList(u128).init(space.allocator);
-    defer stale_keys.deinit();
+    space.stale_arbiter_keys.clearRetainingCapacity();
 
     var it = space.arbiter_cache.iterator();
     while (it.next()) |entry| {
-        if (entry.value_ptr.stamp != space.stamp) {
-            stale_keys.append(entry.key_ptr.*) catch {};
+        const body_a = entry.value_ptr.value.shape_a.body;
+        const body_b = entry.value_ptr.value.shape_b.body;
+        if ((body_a.body_type == .static or body_a.sleeping) and (body_b.body_type == .static or body_b.sleeping)) {
+            continue;
+        }
+
+        const ticks = space.stamp - entry.value_ptr.stamp;
+        if (ticks >= 1 and !entry.value_ptr.separated) {
+            const handler = selectHandler(space, entry.value_ptr.value.shape_a, entry.value_ptr.value.shape_b);
+            if (handler.separate) |sep_func| {
+                var temp = entry.value_ptr.value;
+                sep_func(&temp, space);
+            }
+            entry.value_ptr.separated = true;
+        }
+
+        if (ticks >= @as(u64, space.collision_persistence)) {
+            space.stale_arbiter_keys.append(space.allocator, entry.key_ptr.*) catch {};
         }
     }
 
-    for (stale_keys.items) |key| {
+    for (space.stale_arbiter_keys.items) |key| {
         if (space.arbiter_cache.remove(key)) |cached| {
-            const handler = selectHandler(space, cached.value.shape_a, cached.value.shape_b);
-            if (handler.separate) |sep_func| {
-                var temp = cached.value;
-                sep_func(&temp, space);
-            }
             stashArbiter(space, cached.value);
         }
     }
@@ -720,17 +855,16 @@ fn filterArbitersWithShape(space: *cpSpace, shape: *shape_base.cpShape) void {
         i += 1;
     }
 
-    var stale_keys = std.ArrayList(u128).init(space.allocator);
-    defer stale_keys.deinit();
+    space.stale_arbiter_keys.clearRetainingCapacity();
 
     var it = space.arbiter_cache.iterator();
     while (it.next()) |entry| {
         if (matchesShape(entry.value_ptr.value, shape)) {
-            stale_keys.append(entry.key_ptr.*) catch {};
+            space.stale_arbiter_keys.append(space.allocator, entry.key_ptr.*) catch {};
         }
     }
 
-    for (stale_keys.items) |key| {
+    for (space.stale_arbiter_keys.items) |key| {
         if (space.arbiter_cache.remove(key)) |cached| {
             const handler = selectHandler(space, cached.value.shape_a, cached.value.shape_b);
             if (handler.separate) |sep_func| {
@@ -757,17 +891,16 @@ fn filterArbitersWithBody(space: *cpSpace, body: *body_mod.cpBody) void {
         i += 1;
     }
 
-    var stale_keys = std.ArrayList(u128).init(space.allocator);
-    defer stale_keys.deinit();
+    space.stale_arbiter_keys.clearRetainingCapacity();
 
     var it = space.arbiter_cache.iterator();
     while (it.next()) |entry| {
         if (matchesBody(entry.value_ptr.value, body)) {
-            stale_keys.append(entry.key_ptr.*) catch {};
+            space.stale_arbiter_keys.append(space.allocator, entry.key_ptr.*) catch {};
         }
     }
 
-    for (stale_keys.items) |key| {
+    for (space.stale_arbiter_keys.items) |key| {
         if (space.arbiter_cache.remove(key)) |cached| {
             const handler = selectHandler(space, cached.value.shape_a, cached.value.shape_b);
             if (handler.separate) |sep_func| {

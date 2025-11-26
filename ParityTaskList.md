@@ -4,21 +4,21 @@ This plan captures the open parity, performance, and memory items needed to brin
 
 ## Task Checklist
 
-- [ ] **Collision Handling**
-    - [ ] Implement pair-based handler lookup with wildcard precedence (typeA/typeB key) instead of single-type matching.
-    - [ ] Fire `separate` callbacks only on contact exit; avoid per-step separate calls while bodies still overlap.
-- [ ] **Sleeping & Contact Persistence**
-    - [ ] Restore idle-based sleeping using stamps and thresholds (`sleepTimeThreshold`/`idleSpeedThreshold`) rather than instantaneous energy cutoff.
-    - [ ] Keep arbiters alive for `collisionPersistence` frames to preserve warm-start data; avoid pruning after one missed frame.
-- [ ] **Collision Parameters**
-    - [ ] Make `collisionSlop` and `collisionBias` configurable per space with Chipmunk defaults; remove hard-coded values in arbiter setup.
-- [ ] **Geometry & Messaging**
-    - [ ] Align `cpAreaForPoly`/mass info for 2-vertex polygons with segment math (non-zero area/mass).
-    - [ ] Honor `is_hard_error` semantics in `cpMessage` (and platform logging hooks) or document the intentional divergence.
-- [ ] **API Surface Parity**
-    - [ ] Add Objective-C-style `_b` block helper entry points (each/queries) or provide equivalent Zig APIs if full parity is required.
-- [ ] **Memory & Per-Step Allocation**
-    - [ ] Reuse pooled storage for component/sleep processing and contact data; reduce per-step allocator churn to match Chipmunk’s pooled design.
+- [x] **Collision Handling**
+    - [x] Implement pair-based handler lookup with wildcard precedence (typeA/typeB key) instead of single-type matching.
+    - [x] Fire `separate` callbacks only on contact exit; avoid per-step separate calls while bodies still overlap.
+- [x] **Sleeping & Contact Persistence**
+    - [x] Restore idle-based sleeping using stamps and thresholds (`sleepTimeThreshold`/`idleSpeedThreshold`) rather than instantaneous energy cutoff.
+    - [x] Keep arbiters alive for `collisionPersistence` frames to preserve warm-start data; avoid pruning after one missed frame.
+- [x] **Collision Parameters**
+    - [x] Make `collisionSlop` and `collisionBias` configurable per space with Chipmunk defaults; remove hard-coded values in arbiter setup.
+- [x] **Geometry & Messaging**
+    - [x] Align `cpAreaForPoly`/mass info for 2-vertex polygons with segment math (non-zero area/mass).
+    - [x] Honor `is_hard_error` semantics in `cpMessage` (and platform logging hooks) or document the intentional divergence.
+- [x] **API Surface Parity**
+    - [x] Add helper entry points for iteration and queries with Zig-style callbacks and context pointers as equivalents to the Objective-C `_b` APIs.
+- [x] **Memory & Per-Step Allocation**
+    - [x] Reuse pooled storage for component/sleep processing and contact data; reduce per-step allocator churn to match Chipmunk’s pooled design.
 
 ## Detailed Tasks
 

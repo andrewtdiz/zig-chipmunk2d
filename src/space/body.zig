@@ -20,6 +20,7 @@ pub const cpBody = struct {
     w_bias: types.cpFloat = 0.0,
     sleeping: bool = false,
     idle_stamp: u64 = 0,
+    idle_time: types.cpFloat = 0.0,
     user_data: types.cpDataPointer = null,
 
     pub fn init(mass: types.cpFloat, moment: types.cpFloat) cpBody {

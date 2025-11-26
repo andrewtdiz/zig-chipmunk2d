@@ -3,9 +3,7 @@ const vect = @import("../core/vect.zig");
 const types = @import("../core/types.zig");
 const shape_base = @import("../shape/shape_base.zig");
 const collision = @import("collision.zig");
-const constraint_base = @import("../constraint/constraint_base.zig");
 
-const COLLISION_SLOP: types.cpFloat = 0.01;
 const MAX_BIAS: types.cpFloat = 20.0;
 
 pub const ArbiterContact = struct {
@@ -107,8 +105,12 @@ pub const cpArbiter = struct {
         return depth;
     }
 
-    pub fn preStep(self: *cpArbiter, dt: types.cpFloat) void {
-        const bias_coef = constraint_base.biasCoefficient(0.1, dt);
+    pub fn preStep(
+        self: *cpArbiter,
+        dt: types.cpFloat,
+        collision_slop: types.cpFloat,
+        bias_coef: types.cpFloat,
+    ) void {
         const body_a = self.shape_a.body;
         const body_b = self.shape_b.body;
 
@@ -127,7 +129,7 @@ pub const cpArbiter = struct {
             const inv_tangent = body_a.m_inv + body_b.m_inv + rt1 * rt1 * body_a.i_inv + rt2 * rt2 * body_b.i_inv;
             contact.t_mass = if (inv_tangent > 0.0) 1.0 / inv_tangent else 0.0;
 
-            const penetration = types.cpfmin(0.0, contact.distance + COLLISION_SLOP);
+            const penetration = types.cpfmin(0.0, contact.distance + collision_slop);
             var bias = -bias_coef * penetration / dt;
             bias = types.cpfclamp(bias, -MAX_BIAS, MAX_BIAS);
             contact.bias = bias;
