@@ -79,6 +79,7 @@ pub const cpShape = struct {
     filter: cpShapeFilter = cpShapeFilter.all(),
     user_data: types.cpDataPointer = null,
     mass_info: cpShapeMassInfo = cpShapeMassInfo.init(0.0, 0.0, vect.cpvzero, 0.0),
+    next: ?*cpShape = null,
 
     pub fn init(shape_type: ShapeType, body: *body_mod.cpBody) cpShape {
         return .{ .shape_type = shape_type, .body = body };
@@ -107,6 +108,20 @@ pub const cpShape = struct {
     pub fn setDensity(self: *cpShape, density: types.cpFloat) void {
         self.mass_info.m = density * self.mass_info.area;
     }
+};
+
+pub const cpPointQueryInfo = struct {
+    shape: ?*const cpShape = null,
+    point: vect.cpVect = vect.cpvzero,
+    distance: types.cpFloat = 0.0,
+    gradient: vect.cpVect = vect.cpvzero,
+};
+
+pub const cpSegmentQueryInfo = struct {
+    shape: ?*const cpShape = null,
+    point: vect.cpVect = vect.cpvzero,
+    normal: vect.cpVect = vect.cpvzero,
+    alpha: types.cpFloat = 1.0,
 };
 
 pub fn cpAreaForCircle(inner_radius: types.cpFloat, outer_radius: types.cpFloat) types.cpFloat {

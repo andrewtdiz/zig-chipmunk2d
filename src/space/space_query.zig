@@ -52,6 +52,38 @@ pub fn makeQueryApi(comptime Space: type) type {
             space.static_index.query(bounds, segmentCallback, &ctx);
         }
 
+        pub fn segmentQueryFirst(
+            space_const: *const Space,
+            start: vect.cpVect,
+            end: vect.cpVect,
+            radius: types.cpFloat,
+            filter: shape_base.cpShapeFilter,
+            info: ?*shape_base.cpSegmentQueryInfo,
+        ) ?*shape_base.cpShape {
+            var space = @constCast(space_const);
+            var ctx = SegmentFirstContext{ .start = start, .end = end, .radius = radius, .filter = filter };
+            const bounds = segmentBounds(start, end, radius);
+            space.dynamic_index.query(bounds, segmentFirstCallback, &ctx);
+            space.static_index.query(bounds, segmentFirstCallback, &ctx);
+
+            if (ctx.best_shape) |shape| {
+                if (info) |out| {
+                    out.* = .{
+                        .shape = shape,
+                        .point = ctx.best_hit.?.point,
+                        .normal = ctx.best_hit.?.normal,
+                        .alpha = ctx.best_hit.?.alpha,
+                    };
+                }
+                return shape;
+            }
+
+            if (info) |out| {
+                out.* = .{};
+            }
+            return null;
+        }
+
         pub fn shapeQuery(
             space_const: *const Space,
             target: *shape_base.cpShape,
@@ -87,6 +119,15 @@ pub fn makeQueryApi(comptime Space: type) type {
             data: ?*anyopaque,
         };
 
+        const SegmentFirstContext = struct {
+            start: vect.cpVect,
+            end: vect.cpVect,
+            radius: types.cpFloat,
+            filter: shape_base.cpShapeFilter,
+            best_hit: ?SegmentHit = null,
+            best_shape: ?*shape_base.cpShape = null,
+        };
+
         const ShapeContext = struct {
             target: *shape_base.cpShape,
             func: fn (*shape_base.cpShape, collision.CollisionResult, ?*anyopaque) void,
@@ -119,6 +160,19 @@ pub fn makeQueryApi(comptime Space: type) type {
             if (shape_base.cpShapeFilter.reject(shape.filter, ctx.filter)) return;
             if (segmentHit(shape, ctx.start, ctx.end, ctx.radius)) |hit| {
                 ctx.func(shape, hit.point, hit.normal, hit.alpha, ctx.data);
+            }
+        }
+
+        fn segmentFirstCallback(object: *const anyopaque, _: bb.cpBB, ctx_ptr: ?*anyopaque) void {
+            const ctx = @as(*SegmentFirstContext, @ptrCast(ctx_ptr.?));
+            const shape = @as(*shape_base.cpShape, @ptrCast(object));
+            if (shape_base.cpShapeFilter.reject(shape.filter, ctx.filter)) return;
+
+            if (segmentHit(shape, ctx.start, ctx.end, ctx.radius)) |hit| {
+                if (ctx.best_hit == null or hit.alpha < ctx.best_hit.?.alpha) {
+                    ctx.best_hit = hit;
+                    ctx.best_shape = shape;
+                }
             }
         }
 

@@ -93,12 +93,16 @@ pub const Contact = struct {
 };
 
 pub const CollisionResult = struct {
-    contacts: std.BoundedArray(Contact, 4),
+    contacts: std.BoundedArray(Contact, types.CP_MAX_CONTACTS_PER_ARBITER),
     normal: vect.cpVect,
     id: types.cpCollisionID = 0,
 
     pub fn empty() CollisionResult {
-        return .{ .contacts = std.BoundedArray(Contact, 4).init(0) catch unreachable, .normal = vect.cpvzero, .id = 0 };
+        return .{
+            .contacts = std.BoundedArray(Contact, types.CP_MAX_CONTACTS_PER_ARBITER).init(0) catch unreachable,
+            .normal = vect.cpvzero,
+            .id = 0,
+        };
     }
 
     pub fn addContact(self: *CollisionResult, contact: Contact) void {

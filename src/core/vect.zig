@@ -6,6 +6,13 @@ pub const cpVect = struct {
     y: types.cpFloat,
 };
 
+pub const cpMat2x2 = struct {
+    a: types.cpFloat,
+    b: types.cpFloat,
+    c: types.cpFloat,
+    d: types.cpFloat,
+};
+
 pub const cpvzero = cpVect{ .x = 0.0, .y = 0.0 };
 
 pub inline fn cpv(x: types.cpFloat, y: types.cpFloat) cpVect {
@@ -129,6 +136,14 @@ pub inline fn cpvnear(a: cpVect, b: cpVect, distance: types.cpFloat) types.cpBoo
     return cpvdistsq(a, b) < distance * distance;
 }
 
+pub inline fn cpMat2x2New(a: types.cpFloat, b: types.cpFloat, c_: types.cpFloat, d_: types.cpFloat) cpMat2x2 {
+    return .{ .a = a, .b = b, .c = c_, .d = d_ };
+}
+
+pub inline fn cpMat2x2Transform(m: cpMat2x2, v: cpVect) cpVect {
+    return cpv(v.x * m.a + v.y * m.b, v.x * m.c + v.y * m.d);
+}
+
 test "cpVect core operations" {
     const a = cpv(1.0, 2.0);
     const b = cpv(4.0, -2.0);
@@ -140,4 +155,13 @@ test "cpVect core operations" {
     try std.testing.expect(cpvcross(a, b) == -10.0);
     try std.testing.expectApproxEqAbs(5.0, cpvdist(a, b), 1e-9);
     try std.testing.expect(cpvnear(a, cpv(1.5, 2.5), 1.0));
+}
+
+test "cpMat2x2 transforms vectors" {
+    const m = cpMat2x2New(2.0, 0.0, 0.0, 3.0);
+    const v = cpv(1.0, -1.0);
+    const transformed = cpMat2x2Transform(m, v);
+
+    try std.testing.expectApproxEqAbs(2.0, transformed.x, 1e-9);
+    try std.testing.expectApproxEqAbs(-3.0, transformed.y, 1e-9);
 }
