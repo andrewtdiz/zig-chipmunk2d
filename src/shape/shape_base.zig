@@ -157,7 +157,6 @@ pub fn cpCentroidForPoly(vertices: []const vect.cpVect) vect.cpVect {
 }
 
 pub fn cpMomentForPoly(mass: types.cpFloat, vertices: []const vect.cpVect, offset: vect.cpVect, radius: types.cpFloat) types.cpFloat {
-    _ = radius;
     if (vertices.len == 2) return body_mod.cpMomentForSegment(mass, vertices[0], vertices[1], radius);
     if (vertices.len < 2) return 0.0;
 
